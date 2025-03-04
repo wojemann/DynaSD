@@ -5,4 +5,4 @@ Temporary landing page for DynaSD package for annotating and detecting seizures 
 
 We'll be updating the page with the DynaSD package and docker image soon, with functionality for implementing neural dynamic divergence along with a suite of other seizure detection and annotation mdoels to improve clinical and research accessibility to these machine learning tools.
 
-Come check out our AI in Epilepsy poster at P.16
+Come check out our AI in Epilepsy poster at P.16 and reach out with any questions to wojemann@seas.upenn.edu
