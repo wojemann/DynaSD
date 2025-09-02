@@ -15,4 +15,4 @@ from .MINDA import MINDA
 from .IMPRINT import IMPRINT
 
 __version__ = "0.1.0"
-__all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN", "LiNDDA", "MINDA"] 
+__all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN", "LiNDDA", "MINDA","IMPRINT"] 
