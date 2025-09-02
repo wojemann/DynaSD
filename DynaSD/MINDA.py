@@ -14,10 +14,11 @@ class MLPForecaster(nn.Module):
     Multi-layer perceptron for multi-step forecasting.
     Takes flattened input sequence and predicts flattened forecast sequence.
     """
-    def __init__(self, input_size, sequence_length, hidden_sizes=[128, 64], dropout=0.1):
+    def __init__(self, input_size, sequence_length, hidden_sizes=[128, 64], dropout=0.1, use_batch_norm=True):
         super(MLPForecaster, self).__init__()
         self.input_size = input_size
         self.sequence_length = sequence_length
+        self.use_batch_norm = use_batch_norm
         
         # Input: (batch_size, sequence_length * input_size)
         # Output: (batch_size, sequence_length * input_size) 
@@ -28,8 +29,13 @@ class MLPForecaster(nn.Module):
         layers = []
         prev_dim = input_dim
         
-        for hidden_size in hidden_sizes:
+        for i, hidden_size in enumerate(hidden_sizes):
             layers.append(nn.Linear(prev_dim, hidden_size))
+            
+            # Add batch normalization after each linear layer (except the last)
+            if use_batch_norm:
+                layers.append(nn.BatchNorm1d(hidden_size))
+            
             layers.append(nn.ReLU())
             layers.append(nn.Dropout(dropout))
             prev_dim = hidden_size
@@ -38,6 +44,20 @@ class MLPForecaster(nn.Module):
         layers.append(nn.Linear(prev_dim, output_dim))
         
         self.mlp = nn.Sequential(*layers)
+        
+        # Initialize weights properly to prevent flat outputs
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights to maintain signal dynamics"""
+        for module in self.mlp.modules():
+            if isinstance(module, nn.Linear):
+                # Xavier/Glorot initialization for better gradient flow
+                nn.init.xavier_uniform_(module.weight, gain=1.0)
+                
+                # Initialize bias to small values to prevent zero outputs
+                if module.bias is not None:
+                    nn.init.uniform_(module.bias, -0.01, 0.01)
     
     def forward(self, input_sequence, forecast_steps):
         """
@@ -77,6 +97,7 @@ class MINDA(NDDBase):
                  sequence_length=16,    # Both input and forecast length (constrained to be equal)
                  hidden_sizes=[128, 64], # MLP hidden layer sizes
                  dropout=0.1,           # Dropout rate
+                 use_batch_norm=True,   # Whether to use batch normalization
                  w_size=1, 
                  w_stride=0.5,
                  num_epochs=10,
@@ -94,6 +115,7 @@ class MINDA(NDDBase):
         self.forecast_horizon = sequence_length  # For backward compatibility
         self.hidden_sizes = hidden_sizes
         self.dropout = dropout
+        self.use_batch_norm = use_batch_norm
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.lr = lr
@@ -112,7 +134,8 @@ class MINDA(NDDBase):
             input_size=input_size,
             sequence_length=self.sequence_length,
             hidden_sizes=self.hidden_sizes,
-            dropout=self.dropout
+            dropout=self.dropout,
+            use_batch_norm=self.use_batch_norm
         ).to(self.device)
         
         print(f"  Model: {self.model}")

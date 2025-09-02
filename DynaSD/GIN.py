@@ -83,6 +83,30 @@ class MultiStepGRU(nn.Module):
         self.skip_weight = nn.Parameter(torch.tensor(residual_init))  # Learnable skip weight with custom initialization
         
         self.projection = nn.Linear(hidden_size, input_size)
+        
+        # Initialize weights properly to prevent vanishing gradients
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights to prevent vanishing gradients and state collapse"""
+        # Initialize GRU weights
+        for name, param in self.gru.named_parameters():
+            if 'weight_ih' in name:  # Input-to-hidden weights
+                nn.init.xavier_uniform_(param, gain=1.0)
+            elif 'weight_hh' in name:  # Hidden-to-hidden weights
+                nn.init.orthogonal_(param, gain=1.0)  # Orthogonal helps with long sequences
+            elif 'bias' in name:
+                nn.init.zeros_(param)
+                # Set update gate bias to 1 for better gradient flow
+                if 'bias_ih' in name:
+                    param.data[param.size(0)//3:2*param.size(0)//3] = 1.0
+        
+        # Initialize linear layer weights
+        nn.init.xavier_uniform_(self.input_projection.weight, gain=1.0)
+        nn.init.zeros_(self.input_projection.bias)
+        
+        nn.init.xavier_uniform_(self.projection.weight, gain=1.0)
+        nn.init.zeros_(self.projection.bias)
     
     def forward(self, input_sequence, forecast_steps):
         # Phase 1: Process input sequence

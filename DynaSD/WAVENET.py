@@ -110,15 +110,16 @@ class WVNT:
     fs : int, default=128
         Sampling frequency for the model input
     """
-    def __init__(self, mdl, win_size=1, stride=0.5, fs=128):
+    def __init__(self, mdl = None, w_size=1, w_stride=0.5, fs=128):
         """Initialize WaveNet wrapper with model and windowing parameters."""
-        self.win_size = win_size
-        self.stride = stride
+        self.w_size = w_size
+        self.w_stride = w_stride
         self.fs = fs
         self.mdl = mdl
         
         if self.mdl is None:
-            print("Warning: No valid model provided to WVNT")
+            self.mdl = load_wavenet_model(ospj('..','checkpoints', 'WaveNet', 'v111.hdf5'))
+            print("Warning: No valid model provided to WVNT, using default model")
     
     def __str__(self) -> str:
         return "WVNT"

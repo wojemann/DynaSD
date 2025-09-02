@@ -25,6 +25,17 @@ class LinearForecaster(nn.Module):
         output_dim = sequence_length * input_size
         
         self.linear = nn.Linear(input_dim, output_dim)
+        
+        # Initialize weights properly to prevent flat outputs
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights to maintain signal dynamics"""
+        # Xavier/Glorot initialization for better gradient flow
+        nn.init.xavier_uniform_(self.linear.weight, gain=1.0)
+        
+        # Initialize bias to small values to prevent zero outputs
+        nn.init.uniform_(self.linear.bias, -0.01, 0.01)
     
     def forward(self, input_sequence, forecast_steps):
         """
