@@ -63,7 +63,7 @@ class NDDBase(DynaSDBase):
         self.patience = training_kwargs.get('patience', 5)
         self.tolerance = training_kwargs.get('tolerance', 1e-4)
         
-    def _train_model_multistep(self, X, model, sequence_length, num_epochs, batch_size, lr, lambda_zcr, 
+    def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
         """
         Standardized training loop for multi-step forecasting models.
@@ -75,14 +75,13 @@ class NDDBase(DynaSDBase):
             num_epochs: Number of training epochs
             batch_size: Batch size for training
             lr: Learning rate
-            lambda_zcr: Weight for zero-crossing rate loss
             early_stopping: Whether to use early stopping
             val_split: Fraction of data to use for validation
             patience: Number of epochs to wait before early stopping
             tolerance: Minimum improvement threshold for early stopping
         """
         print(f"Training {model.__class__.__name__} model:")
-        print(f"  Sequence length: {sequence_length} (input=forecast)")
+        print(f"  Sequence length: {sequence_length}, Forecast length: {forecast_length}")
         print(f"  Early stopping: {early_stopping}")
         
         input_size = X.shape[1]
@@ -92,7 +91,7 @@ class NDDBase(DynaSDBase):
         X_scaled = self._scaler_transform(X)
         
         # Prepare sequences from continuous data
-        input_data, target_data = self._prepare_multistep_sequences(X_scaled, sequence_length)
+        input_data, target_data = self._prepare_multistep_sequences(X_scaled, sequence_length, forecast_length)
         print(f"  Created {len(input_data)} sequences")
         
         # Split data for validation if early stopping is enabled
@@ -111,6 +110,7 @@ class NDDBase(DynaSDBase):
             val_targets = target_data[val_indices]
             
             print(f"  Training sequences: {len(train_inputs)}, Validation sequences: {len(val_inputs)}")
+
         else:
             train_inputs = input_data
             train_targets = target_data
@@ -151,30 +151,14 @@ class NDDBase(DynaSDBase):
                 optimizer.zero_grad()
                 
                 # Forward pass
-                predictions = model(inputs, sequence_length)
+                predictions = model(inputs, forecast_length)
                 
                 # MSE loss (averaged across channels for training)
                 mse_loss = mse_criterion(predictions, targets)
-                
-                # Zero-crossing rate loss (averaged across channels for training)
-                zcr_loss = 0
-                batch_size_actual, seq_len, n_channels = predictions.shape
-                for i in range(batch_size_actual):
-                    for j in range(n_channels):
-                        pred_zcr = zero_crossing_rate(predictions[i, :, j].cpu().detach().numpy())
-                        target_zcr = zero_crossing_rate(targets[i, :, j].cpu().detach().numpy())
-                        zcr_loss += (pred_zcr - target_zcr) ** 2
-                
-                zcr_loss = zcr_loss / (batch_size_actual * n_channels)
-                zcr_loss = torch.tensor(zcr_loss, device=self.device, requires_grad=True)
-                
-                # Combined loss (averaged across channels)
-                total_loss = mse_loss + lambda_zcr * zcr_loss * 100
-                
-                total_loss.backward()
+                mse_loss.backward()
                 optimizer.step()
                 
-                epoch_losses.append(total_loss.item())
+                epoch_losses.append(mse_loss.item())
             
             avg_train_loss = np.mean(epoch_losses)
             
@@ -188,21 +172,9 @@ class NDDBase(DynaSDBase):
                         inputs = inputs.to(self.device)
                         targets = targets.to(self.device)
                         
-                        predictions = model(inputs, sequence_length)
+                        predictions = model(inputs, forecast_length)
                         mse_loss = mse_criterion(predictions, targets)
-                        
-                        # ZCR loss for validation
-                        zcr_loss = 0
-                        batch_size_actual, seq_len, n_channels = predictions.shape
-                        for i in range(batch_size_actual):
-                            for j in range(n_channels):
-                                pred_zcr = zero_crossing_rate(predictions[i, :, j].cpu().numpy())
-                                target_zcr = zero_crossing_rate(targets[i, :, j].cpu().numpy())
-                                zcr_loss += (pred_zcr - target_zcr) ** 2
-                        
-                        zcr_loss = zcr_loss / (batch_size_actual * n_channels)
-                        total_loss = mse_loss + lambda_zcr * zcr_loss * 100
-                        val_losses.append(total_loss.item())
+                        val_losses.append(mse_loss.item())
                 
                 avg_val_loss = np.mean(val_losses)
                 
@@ -254,8 +226,6 @@ class NDDBase(DynaSDBase):
         # Aggregate sequences into windows
         window_features = {
             'mse': np.full((nwins, n_channels), np.nan),
-            'zcr': np.full((nwins, n_channels), np.nan),
-            'combined': np.full((nwins, n_channels), np.nan),
             'corr': np.full((nwins, n_channels), np.nan)
         }
         
@@ -272,14 +242,10 @@ class NDDBase(DynaSDBase):
             
             # Aggregate if we have sequences in this window
             if sequences_in_window:
-                mse_values = np.array([s['mse'] for s in sequences_in_window])
-                zcr_values = np.array([s['zcr'] for s in sequences_in_window]) 
-                combined_values = np.array([s['combined'] for s in sequences_in_window])
+                # mse_values = np.array([s['mse'] for s in sequences_in_window])
                 
-                # Take mean across sequences in window
-                window_features['mse'][win_idx] = np.mean(mse_values, axis=0)
-                window_features['zcr'][win_idx] = np.mean(zcr_values, axis=0)
-                window_features['combined'][win_idx] = np.mean(combined_values, axis=0)
+                # # Take mean across sequences in window
+                # window_features['mse'][win_idx] = np.mean(mse_values, axis=0)
                 
                 # Correlation requires per-channel predicted/target sequences
                 if 'predicted_seq' in sequences_in_window[0] and 'target_seq' in sequences_in_window[0]:
@@ -290,19 +256,18 @@ class NDDBase(DynaSDBase):
                             np.corrcoef(a, b)[0, 1] if np.std(a) > 0 and np.std(b) > 0 else 0.0
                             for a, b in zip(combined_predicted, combined_target)
                         ])
+                        window_features['mse'][win_idx] = np.sqrt(np.mean((combined_predicted - combined_target) ** 2, axis=1))
                     except Exception:
                         # Fallback: leave as NaN if concatenation fails
                         pass
         
         # Create separate DataFrames for each feature type
         mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
-        zcr_df = pd.DataFrame(window_features['zcr'], columns=X.columns)
-        combined_df = pd.DataFrame(window_features['combined'], columns=X.columns)
         corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
         
-        return mse_df, zcr_df, combined_df, corr_df
+        return mse_df, corr_df
     
-    def _prepare_multistep_sequences(self, data, sequence_length, ret_positions=False):
+    def _prepare_multistep_sequences(self, data, sequence_length, forecast_length = 1,ret_positions=False):
         """
         Prepare sequences from continuous data for multi-step forecasting.
         Used by GIN, LiNDDA, MINDA.
@@ -316,11 +281,12 @@ class NDDBase(DynaSDBase):
             tuple: (input_data, target_data, [seq_positions])
         """
         data_np = data.to_numpy()
-        n_samples, n_channels = data_np.shape
+        n_samples, _ = data_np.shape
         
         # Create non-overlapping sequences with stride = sequence_length
-        stride = sequence_length
-        total_seq_length = 2 * sequence_length  # input + target
+        stride = forecast_length
+
+        total_seq_length = sequence_length + forecast_length  # input + target
         
         # Calculate how many sequences we can create
         n_sequences = (n_samples - total_seq_length) // stride + 1
@@ -337,7 +303,7 @@ class NDDBase(DynaSDBase):
         for seq_idx in range(n_sequences):
             seq_start = seq_idx * stride
             input_end = seq_start + sequence_length
-            target_end = input_end + sequence_length
+            target_end = input_end + forecast_length
             
             # Extract input and target sequences
             input_seq = data_np[seq_start:input_end, :]
@@ -375,7 +341,7 @@ class NDDBase(DynaSDBase):
         assert hasattr(self, 'sequence_length'), "Model must have sequence_length attribute for multi-step prediction"
         
         X_scaled = self._scaler_transform(X)
-        input_data, _, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, ret_positions=True)
+        input_data, _, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
         
         # Run inference to get all predictions
         self.model.eval()
@@ -386,10 +352,11 @@ class NDDBase(DynaSDBase):
             batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
             dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
             
+            # In theory this will propagate the forecasting method implemented in the specific model classes
             for inputs, _ in dataloader:
                 inputs = inputs.to(self.device)
                 if hasattr(self.model, 'forward') and 'forecast_steps' in self.model.forward.__code__.co_varnames:
-                    predictions = self.model(inputs, self.sequence_length)
+                    predictions = self.model(inputs, self.forecast_length)
                 else:
                     predictions = self.model(inputs)
                 all_predictions.append(predictions.cpu())
