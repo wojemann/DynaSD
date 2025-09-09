@@ -13,6 +13,7 @@ from .GIN import GIN
 from .LiNDDA import LiNDDA
 from .MINDD import MINDD
 from .IMPRINT import IMPRINT
+from .LiRNDDA import LiRNDDA
 
 __version__ = "0.1.0"
 __all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN", "LiNDDA", "MINDD","IMPRINT"] 
