@@ -69,16 +69,18 @@ class NDDBase(DynaSDBase):
         X_scaled = self._scaler_transform(X)
         
         # Prepare sequences from continuous data
-        input_data, target_data = self._prepare_multistep_sequences(X_scaled, sequence_length, forecast_length)
-        print(f"  Created {len(input_data)} sequences")
-        
+        input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, sequence_length, forecast_length,ret_positions=True)
+
         # Split data for validation if early stopping is enabled
         if early_stopping:
             val_size = int(len(input_data) * val_split)
             train_size = len(input_data) - val_size
             
             # Random split
-            indices = torch.randperm(len(input_data))
+            # indices = torch.randperm(len(input_data))
+            # train_indices = indices[:train_size]
+            # val_indices = indices[train_size:]
+            indices = np.arange(len(input_data))
             train_indices = indices[:train_size]
             val_indices = indices[train_size:]
             
@@ -177,8 +179,7 @@ class NDDBase(DynaSDBase):
 
         self.is_fitted = True
         mse,corr = self._get_features(X)
-        print(mse.iloc[-5:,:].head())
-        print(mse.shape)
+
         dist_params = {ch:dict() for ch in X.columns}
         for ch in X.columns:
             mse_x = mse[ch].to_numpy().reshape(-1,1)
@@ -195,78 +196,12 @@ class NDDBase(DynaSDBase):
  
         print("Training completed")
         
-    # def _aggregate_sequences_to_windows(self, seq_results, X):
-    #     """
-    #     Aggregate sequence-level results into w_size/w_stride windows.
-        
-    #     Args:
-    #         seq_results: List of dictionaries with sequence results
-    #         X: Original input DataFrame
-            
-    #     Returns:
-    #         tuple: (mse_df, zcr_df, combined_df, corr_df) - Four DataFrames with channel names as columns
-    #     """
-    #     n_samples = len(X)
-    #     n_channels = X.shape[1]
-        
-    #     # Get window times using base class utility
-    #     nwins = num_wins(n_samples, self.fs, self.w_size, self.w_stride)
-        
-    #     # Calculate window start times
-    #     window_times = []
-    #     for win_idx in range(nwins):
-    #         win_start_time = win_idx * self.w_stride
-    #         win_end_time = win_start_time + self.w_size
-    #         window_times.append((win_start_time, win_end_time))
-        
-    #     # Aggregate sequences into windows
-    #     window_features = {
-    #         'mse': np.full((nwins, n_channels), np.nan),
-    #         'corr': np.full((nwins, n_channels), np.nan)
-    #     }
-        
-    #     for win_idx, (win_start, win_end) in enumerate(window_times):
-    #         # Find sequences that fall within this window
-    #         sequences_in_window = []
-    #         for seq_result in seq_results:
-    #             seq_start = seq_result['target_start_time']
-    #             seq_end = seq_result['target_end_time']
-                
-    #             # Check if sequence overlaps with window
-    #             if seq_start < win_end and seq_end > win_start:
-    #                 sequences_in_window.append(seq_result)
-            
-    #         # Aggregate if we have sequences in this window
-    #         if sequences_in_window:
-    #             # mse_values = np.array([s['mse'] for s in sequences_in_window])
-                
-    #             # # Take mean across sequences in window
-    #             # window_features['mse'][win_idx] = np.mean(mse_values, axis=0)
-                
-    #             # Correlation requires per-channel predicted/target sequences
-    #             if 'predicted_seq' in sequences_in_window[0] and 'target_seq' in sequences_in_window[0]:
-    #                 try:
-    #                     combined_predicted = np.concatenate([s['predicted_seq'] for s in sequences_in_window], axis=0).T
-    #                     combined_target = np.concatenate([s['target_seq'] for s in sequences_in_window], axis=0).T
-    #                     window_features['corr'][win_idx] = np.array([
-    #                         np.corrcoef(a, b)[0, 1] if np.std(a) > 0 and np.std(b) > 0 else 0.0
-    #                         for a, b in zip(combined_predicted, combined_target)
-    #                     ])
-    #                     window_features['mse'][win_idx] = np.sqrt(np.mean((combined_predicted - combined_target) ** 2, axis=1))
-    #                 except Exception:
-    #                     # Fallback: leave as NaN if concatenation fails
-    #                     pass
-        
-    #     # Create separate DataFrames for each feature type
-    #     mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
-    #     corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
-        
-    #     return mse_df, corr_df
+    
     def _aggregate_sequences_to_windows(self, seq_results, X):
         """
-        Aggregate sequence-level results into w_size/w_stride windows with consistent alignment.
+        Aggregate sequence-level results into w_size/w_stride windows.
         
-        Key fix: Calculate windows based on actual sequence coverage, not total data length.
+        Fixed to calculate windows based on actual sequence coverage, not total data length.
         This ensures consistent windowing whether called from fit() or forward().
         
         Args:
@@ -282,16 +217,19 @@ class NDDBase(DynaSDBase):
         if not seq_results:
             raise ValueError("No sequences provided for aggregation")
         
+        max_sequence_time = max(s['target_end_time'] for s in seq_results)
         
-        max_sequence_time = max(s['target_end_time'] for s in seq_results) if seq_results else 0
-        max_samples_needed = int(max_sequence_time * self.fs) + 1
-        nwins = num_wins(max_samples_needed, self.fs, self.w_size, self.w_stride)
+        # Create windows covering the sequence time range
+        # This ensures same windowing regardless of total data length
+        window_starts = []
+        current_time = 0.0  # Always start from 0 for consistency
         
-        window_times = []
-        for win_idx in range(nwins):
-            win_start_time = win_idx * self.w_stride
-            win_end_time = win_start_time + self.w_size
-            window_times.append((win_start_time, win_end_time))
+        while current_time + self.w_size <= max_sequence_time:
+            window_starts.append(current_time)
+            current_time += self.w_stride
+        
+        nwins = len(window_starts)
+        
         # Create window time pairs
         window_times = [(start, start + self.w_size) for start in window_starts]
         
@@ -307,11 +245,14 @@ class NDDBase(DynaSDBase):
             sequences_in_window = []
             
             for seq_result in seq_results:
-                seq_start = seq_result['target_start_time']
+                seq_start = seq_result['seq_start_time']
                 seq_end = seq_result['target_end_time']
                 
                 # Check for time overlap (any overlap counts)
-                if seq_start < win_end and seq_end > win_start:
+                # if seq_start < win_end and seq_end > win_start:
+
+                # Only consider sequences that are fully within the window
+                if seq_start > win_start and seq_end < win_end:
                     sequences_in_window.append(seq_result)
             
             # Aggregate if we have sequences in this window
@@ -337,68 +278,25 @@ class NDDBase(DynaSDBase):
         mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
         corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
         
-        # Store consistent window times for external access
+        # Store window times for external access
         self.window_start_times = np.array(window_starts)
         
         return mse_df, corr_df
 
-    def get_consistent_window_times(self, data_length_samples):
+    def _get_features(self, X):
         """
-        Get window start times that are consistent regardless of input parameters.
-        Use this instead of calculating windows based on num_wins().
+        Run inference and return features aggregated into windows.
+        1. Create sequences from continuous data and get per-channel losses
+        2. Aggregate sequence-level losses into w_size/w_stride windows
         
-        Args:
-            data_length_samples: Number of samples in the data
-            
         Returns:
-            np.array: Window start times in seconds
-        """
-        data_duration = data_length_samples / self.fs
-        
-        window_starts = []
-        current_time = 0.0
-        
-        while current_time + self.w_size <= data_duration:
-            window_starts.append(current_time)
-            current_time += self.w_stride
-        
-        return np.array(window_starts)
-
-    # Modified forward method to use consistent windowing
-    def forward_consistent(self, X):
-        """
-        Modified forward pass using consistent windowing.
-        """
-        assert self.is_fitted, "Must fit model before running inference"
-        mse_df, corr_df = self._get_features_consistent(X)
-        
-        ndd = pd.DataFrame()
-        for ch in X.columns:
-            mse_y = mse_df[ch].to_numpy().reshape(-1,1)
-            corr_y = corr_df[ch].to_numpy().reshape(-1,1)
-            f = np.concatenate((mse_y,corr_y),axis=1)
-            m = self.dist_params[ch]['m']
-            R = self.dist_params[ch]['R']
-            ri = np.linalg.solve(R.T, (f - m).T)
-            ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
-        
-        # Store consistent window times
-        self.time_wins = self.window_start_times
-        
-        # Store for backward compatibility
-        self.mse_df = mse_df
-        self.corr_df = corr_df
-        self.ndd_df = ndd
-
-        return self.ndd_df
-
-    def _get_features_consistent(self, X):
-        """
-        Modified _get_features using consistent windowing.
+            tuple: (mse_df, corr_df)
+                - mse_df: DataFrame with MSE values, columns = channel names
+                - corr_df: DataFrame with correlation values, columns = channel names
         """
         X_scaled = self._scaler_transform(X)
         input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
-        
+
         # Create dataset and dataloader
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
@@ -427,19 +325,50 @@ class NDDBase(DynaSDBase):
                     # Store results with temporal position and sequences for correlation
                     seq_results.append({
                         'seq_idx': seq_idx,
-                        'seq_start_time': seq_pos['input_time_start'],
-                        'seq_end_time': seq_pos['input_time_end'],
+                        'seq_end_time': seq_pos['seq_time_end'],
+                        'seq_start_time': seq_pos['seq_time_start'],
                         'target_start_time': seq_pos['target_time_start'],
-                        'target_end_time': seq_pos['target_time_end'],
+                        'target_end_time': seq_pos['target_time_start'] + self.forecast_length / self.fs,
                         'predicted_seq': predictions[batch_idx].cpu().numpy(),
                         'target_seq': targets[batch_idx].cpu().numpy()
                     })
                 
                 batch_start += batch_size_actual
         
-        # Use consistent window aggregation
-        mse_df, corr_df = self._aggregate_sequences_to_windows_consistent(seq_results, X)
+        # Use fixed window aggregation
+        mse_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)
         return mse_df, corr_df
+
+    def forward(self, X):
+        """
+        Run inference and return features aggregated into windows.
+        1. Create sequences from continuous data and get per-channel losses
+        2. Aggregate sequence-level losses into w_size/w_stride windows
+        
+        Returns:
+            ndd_df: DataFrame with NDD values, columns = channel names
+        """
+        assert self.is_fitted, "Must fit model before running inference"
+        mse_df, corr_df = self._get_features(X)
+        ndd = pd.DataFrame()
+        for ch in X.columns:
+            mse_y = mse_df[ch].to_numpy().reshape(-1,1)
+            corr_y = corr_df[ch].to_numpy().reshape(-1,1)
+            f = np.concatenate((mse_y,corr_y),axis=1)
+            m = self.dist_params[ch]['m']
+            R = self.dist_params[ch]['R']
+            ri = np.linalg.solve(R.T, (f - m).T)
+            ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
+        
+        # Store window times using new windowing
+        self.time_wins = self.window_start_times
+        
+        # Store for backward compatibility
+        self.mse_df = mse_df
+        self.corr_df = corr_df
+        self.ndd_df = ndd
+
+        return self.ndd_df
 
     def _prepare_multistep_sequences(self, data, sequence_length, forecast_length = 1,ret_positions=False):
         """
@@ -649,4 +578,7 @@ class NDDBase(DynaSDBase):
         # Apply inverse scaling
         predicted_df_scaled = self.scaler.inverse_transform(predicted_df)
         
-        return predicted_df_scaled 
+        return predicted_df_scaled
+    
+    def get_win_times(self, n_samples):
+        return self.window_start_times if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)

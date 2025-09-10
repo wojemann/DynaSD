@@ -1,4 +1,4 @@
-from .NDDBase import NDDBase, zero_crossing_rate
+from .NDDBase import NDDBase
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -156,64 +156,64 @@ class MINDD(NDDBase):
             tolerance=self.tolerance
         )
         
-    def _get_features(self, X):
-        """
-        Run inference and return features aggregated into windows.
-        1. Create sequences from continuous data and get per-channel losses
-        2. Aggregate sequence-level losses into w_size/w_stride windows
+    # def _get_features(self, X):
+    #     """
+    #     Run inference and return features aggregated into windows.
+    #     1. Create sequences from continuous data and get per-channel losses
+    #     2. Aggregate sequence-level losses into w_size/w_stride windows
         
-        Returns:
-            tuple: (mse_df, corr_df)
-                - mse_df: DataFrame with MSE values, columns = channel names
-                - corr_df: DataFrame with correlation values, columns = channel names
-        """
-        X_scaled = self._scaler_transform(X)
-        input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
+    #     Returns:
+    #         tuple: (mse_df, corr_df)
+    #             - mse_df: DataFrame with MSE values, columns = channel names
+    #             - corr_df: DataFrame with correlation values, columns = channel names
+    #     """
+    #     X_scaled = self._scaler_transform(X)
+    #     input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
         
-        # Create dataset and dataloader
-        dataset = TensorDataset(input_data, target_data)
-        batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    #     # Create dataset and dataloader
+    #     dataset = TensorDataset(input_data, target_data)
+    #     batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
+    #     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
         
-        # Run inference to get sequence-level predictions
-        self.model.eval()
-        seq_results = []
+    #     # Run inference to get sequence-level predictions
+    #     self.model.eval()
+    #     seq_results = []
         
-        with torch.no_grad():
-            batch_start = 0
-            for inputs, targets in dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+    #     with torch.no_grad():
+    #         batch_start = 0
+    #         for inputs, targets in dataloader:
+    #             inputs = inputs.to(self.device)
+    #             targets = targets.to(self.device)
                 
-                # Get predictions
-                predictions = self.model(inputs, self.forecast_length)
+    #             # Get predictions
+    #             predictions = self.model(inputs, self.forecast_length)
                 
-                # Calculate per-channel losses for each sequence in batch
-                batch_size_actual, seq_len, n_channels = predictions.shape
+    #             # Calculate per-channel losses for each sequence in batch
+    #             batch_size_actual, seq_len, n_channels = predictions.shape
                 
-                for batch_idx in range(batch_size_actual):
-                    seq_idx = batch_start + batch_idx
-                    seq_pos = seq_positions[seq_idx]
+    #             for batch_idx in range(batch_size_actual):
+    #                 seq_idx = batch_start + batch_idx
+    #                 seq_pos = seq_positions[seq_idx]
                     
-                    # MSE per channel for this sequence
-                    mse = torch.mean((predictions[batch_idx] - targets[batch_idx]) ** 2, dim=0).cpu().numpy()
+    #                 # MSE per channel for this sequence
+    #                 mse = torch.mean((predictions[batch_idx] - targets[batch_idx]) ** 2, dim=0).cpu().numpy()
                     
-                    # Store results with temporal position and sequences for correlation
-                    seq_results.append({
-                        'seq_idx': seq_idx,
-                        'target_start_time': seq_pos['target_time_start'],
-                        'target_end_time': seq_pos['target_time_start'] + self.forecast_length / self.fs,
-                        'mse': np.sqrt(mse),
-                        'predicted_seq': predictions[batch_idx].cpu().numpy(),
-                        'target_seq': targets[batch_idx].cpu().numpy()
-                    })
+    #                 # Store results with temporal position and sequences for correlation
+    #                 seq_results.append({
+    #                     'seq_idx': seq_idx,
+    #                     'target_start_time': seq_pos['target_time_start'],
+    #                     'target_end_time': seq_pos['target_time_start'] + self.forecast_length / self.fs,
+    #                     'mse': np.sqrt(mse),
+    #                     'predicted_seq': predictions[batch_idx].cpu().numpy(),
+    #                     'target_seq': targets[batch_idx].cpu().numpy()
+    #                 })
                 
-                batch_start += batch_size_actual
+    #             batch_start += batch_size_actual
         
-        # Now aggregate sequence results into windows
-        mse_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)
+    #     # Now aggregate sequence results into windows
+    #     mse_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)
 
-        return mse_df, corr_df
+    #     return mse_df, corr_df
     
     def forward(self, X):
         """
