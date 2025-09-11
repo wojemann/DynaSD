@@ -581,4 +581,4 @@ class NDDBase(DynaSDBase):
         return predicted_df_scaled
     
     def get_win_times(self, n_samples):
-        return self.window_start_times + self.w_size/2 if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)
+        return self.window_start_times if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)

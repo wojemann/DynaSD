@@ -25,7 +25,7 @@ class DynaSDBase:
         win_len = int(self.w_size * self.fs)
         step = int(self.w_stride * self.fs)
         n_windows = (n_samples - win_len) // step + 1
-        return np.arange(n_windows) * self.w_stride + self.w_size/2 # center aligned windows
+        return np.arange(n_windows) * self.w_stride
     
     def get_onset_and_spread(self, sz_prob, threshold=None,
                             ret_smooth_mat=False,
