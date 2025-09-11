@@ -249,10 +249,10 @@ class NDDBase(DynaSDBase):
                 seq_end = seq_result['target_end_time']
                 
                 # Check for time overlap (any overlap counts)
-                # if seq_start < win_end and seq_end > win_start:
+                if seq_start < win_end and seq_end > win_start:
 
                 # Only consider sequences that are fully within the window
-                if seq_start > win_start and seq_end < win_end:
+                # if seq_start > win_start and seq_end < win_end:
                     sequences_in_window.append(seq_result)
             
             # Aggregate if we have sequences in this window
@@ -581,4 +581,4 @@ class NDDBase(DynaSDBase):
         return predicted_df_scaled
     
     def get_win_times(self, n_samples):
-        return self.window_start_times if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)
+        return self.window_start_times + self.w_size/2 if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)

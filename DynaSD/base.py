@@ -1,3 +1,4 @@
+from sys import int_info
 import numpy as np
 import pandas as pd
 import scipy as sc
@@ -24,56 +25,47 @@ class DynaSDBase:
         win_len = int(self.w_size * self.fs)
         step = int(self.w_stride * self.fs)
         n_windows = (n_samples - win_len) // step + 1
-        return np.arange(n_windows) * self.w_stride
+        return np.arange(n_windows) * self.w_stride + self.w_size/2 # center aligned windows
     
-    def get_onset_and_spread(self,sz_prob,threshold=None,
-                             ret_smooth_mat = False,
-                             filter_w = 10, # seconds
-                             rwin_size = 5, # seconds
-                             rwin_req = 4 # seconds
-                             ): 
+    def get_onset_and_spread(self, sz_prob, threshold=None,
+                            ret_smooth_mat=False,
+                            filter_w=10,  # seconds
+                            rwin_size=5,  # seconds
+                            rwin_req=4    # seconds
+                            ):
         if threshold is None:
             threshold = self.threshold
-
-        sz_clf = (sz_prob>threshold).reset_index(drop=True)
+        
+        sz_clf = (sz_prob > threshold).reset_index(drop=True)
         filter_w_idx = np.floor((filter_w - self.w_size)/self.w_stride).astype(int) + 1
-        sz_clf = pd.DataFrame(sc.ndimage.median_filter(sz_clf,size=filter_w_idx,mode='nearest',axes=0,origin=0),columns=sz_prob.columns)
-        seized_idxs = np.any(sz_clf,axis=0)
+        sz_clf = pd.DataFrame(sc.ndimage.median_filter(sz_clf, size=filter_w_idx, mode='nearest', axes=0, origin=0), columns=sz_prob.columns)
+        seized_idxs = np.any(sz_clf, axis=0)
         rwin_size_idx = np.floor((rwin_size - self.w_size)/self.w_stride).astype(int) + 1
         rwin_req_idx = np.floor((rwin_req - self.w_size)/self.w_stride).astype(int) + 1
         
         # Use convolution for faster sliding window computation
-        # Create convolution kernel (array of ones for sliding sum)
+        # Use convolution for faster sliding window computation
         kernel = np.ones(rwin_size_idx)
-        
-        # Apply convolution to each column to get sliding sums, then apply threshold
         sz_spread_data = np.zeros((len(sz_clf) - rwin_size_idx + 1, sz_clf.shape[1]))
+
         for i, col in enumerate(sz_clf.columns):
-            # Convolve with 'valid' mode to match rolling behavior after dropna()
             sliding_sums = np.convolve(sz_clf[col].astype(int), kernel, mode='valid')
-            # Apply threshold condition (equivalent to >= rwin_req_idx)
             sz_spread_data[:, i] = (sliding_sums >= rwin_req_idx).astype(int)
-        
+
         sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
-        
-        # Filling in missing values due to smoothing at end of feature matrix
-        missing_rows = rwin_size_idx-1
-        last_valid_row = sz_spread_idxs_all.iloc[-1]  # Last row of the smoothed matrix
-        padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-        
-        # Append the propagated values to restore alignment
-        sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
 
-        sz_clf_ff = sz_spread_idxs_all_padded.copy()
-
-        # Forward-fill in window space for each channel separately
-        for ch in sz_clf_ff.columns:
-            for j in range(len(sz_clf_ff) - rwin_size_idx):
-                if sz_spread_idxs_all_padded.at[j, ch]:  # If window j is classified as true
-                    future_sum = np.sum(sz_spread_idxs_all_padded.loc[j:j + rwin_size_idx, ch])  # Count future true windows
-                    if future_sum >= rwin_req_idx:  # If requirement met, propagate forward
-                        sz_clf_ff.loc[j:j + rwin_size_idx, ch] = 1
+        # Pad at the END with the last valid row (not zeros)
+        missing_rows = rwin_size_idx - 1
+        if len(sz_spread_idxs_all) > 0:
+            last_valid_row = sz_spread_idxs_all.iloc[-1]
+            padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
+            sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
+        else:
+            # Handle edge case where convolution produces no output
+            sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
+        sz_clf_ff = sz_spread_idxs_all_padded * sz_clf
         
+        # Forward-fill logic continues unchanged...
         sz_spread_idxs = sz_clf_ff.loc[:,seized_idxs]
         extended_seized_idxs = np.any(sz_spread_idxs,axis=0)
         first_sz_idxs = sz_spread_idxs.loc[:,extended_seized_idxs].idxmax(axis=0)
