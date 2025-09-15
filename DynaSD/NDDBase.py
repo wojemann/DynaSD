@@ -410,8 +410,8 @@ class NDDBase(DynaSDBase):
         
         if n_sequences <= 0:
             raise ValueError(f"Not enough data for even one sequence. Need at least {total_seq_length} samples.")
-        
-        print(f"Creating {n_sequences} non-overlapping sequences from continuous data")
+        if self.verbose:
+            print(f"Creating {n_sequences} non-overlapping sequences from continuous data")
         
         all_inputs = []
         all_targets = []
