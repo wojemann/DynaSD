@@ -17,7 +17,7 @@ class NDDBase(DynaSDBase):
     
     def __init__(self, fs=256, w_size=1, w_stride=0.5, use_cuda=False, **kwargs):
         # Extract training-specific parameters before passing to parent
-        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance']
+        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose']
         training_kwargs = {}
         
         for param in training_params:
@@ -40,6 +40,7 @@ class NDDBase(DynaSDBase):
         self.val_split = training_kwargs.get('val_split', 0.2)
         self.patience = training_kwargs.get('patience', 5)
         self.tolerance = training_kwargs.get('tolerance', 1e-4)
+        self.verbose = training_kwargs.get('verbose', True)
         
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
@@ -58,9 +59,10 @@ class NDDBase(DynaSDBase):
             patience: Number of epochs to wait before early stopping
             tolerance: Minimum improvement threshold for early stopping
         """
-        print(f"Training {model.__class__.__name__} model:")
-        print(f"  Sequence length: {sequence_length}, Forecast length: {forecast_length}")
-        print(f"  Early stopping: {early_stopping}")
+        if self.verbose:
+            print(f"Training {model.__class__.__name__} model:")
+            print(f"  Sequence length: {sequence_length}, Forecast length: {forecast_length}")
+            print(f"  Early stopping: {early_stopping}")
         
         input_size = X.shape[1]
         
@@ -89,7 +91,8 @@ class NDDBase(DynaSDBase):
             val_inputs = input_data[val_indices]
             val_targets = target_data[val_indices]
             
-            print(f"  Training sequences: {len(train_inputs)}, Validation sequences: {len(val_inputs)}")
+            if self.verbose:
+                print(f"  Training sequences: {len(train_inputs)}, Validation sequences: {len(val_inputs)}")
 
         else:
             train_inputs = input_data
@@ -114,12 +117,16 @@ class NDDBase(DynaSDBase):
         # Early stopping variables
         best_val_loss = float('inf')
         patience_counter = 0
+        self.early_stop_epoch = num_epochs
         
         # Training loop
-        print("Starting training...")
-        pbar = tqdm(range(num_epochs), desc="Training")
+        if self.verbose:
+            print("Starting training...")
         
-        for epoch in pbar:
+        # Create epoch iterator - use tqdm if verbose, otherwise use regular range
+        epoch_iter = tqdm(range(num_epochs), desc="Training") if self.verbose else range(num_epochs)
+        
+        for epoch in epoch_iter:
             model.train()
             epoch_losses = []
             
@@ -165,17 +172,23 @@ class NDDBase(DynaSDBase):
                 else:
                     patience_counter += 1
                 
-                pbar.set_postfix({
-                    'train_loss': f'{avg_train_loss:.4f}',
-                    'val_loss': f'{avg_val_loss:.4f}',
-                    'patience': patience_counter
-                })
+                # Update progress bar only if verbose
+                if self.verbose:
+                    epoch_iter.set_postfix({
+                        'train_loss': f'{avg_train_loss:.4f}',
+                        'val_loss': f'{avg_val_loss:.4f}',
+                        'patience': patience_counter
+                    })
                 
                 if patience_counter >= patience:
-                    print(f"\nEarly stopping triggered after {epoch + 1} epochs")
+                    if self.verbose:
+                        print(f"\nEarly stopping triggered after {epoch + 1} epochs")
+                    self.early_stop_epoch = epoch
                     break
             else:
-                pbar.set_postfix({'loss': f'{avg_train_loss:.4f}'})
+                # Update progress bar only if verbose
+                if self.verbose:
+                    epoch_iter.set_postfix({'loss': f'{avg_train_loss:.4f}'})
 
         self.is_fitted = True
         mse,corr = self._get_features(X)
@@ -194,7 +207,8 @@ class NDDBase(DynaSDBase):
 
         self.dist_params = dist_params
  
-        print("Training completed")
+        if self.verbose:
+            print("Training completed")
         
     
     def _aggregate_sequences_to_windows(self, seq_results, X):
