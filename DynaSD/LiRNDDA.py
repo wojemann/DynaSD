@@ -166,7 +166,8 @@ class LiRNDDA(NDDBase):
             num_layers=self.num_layers,
         ).to(self.device)
         
-        print(f"  Model: {self.model}")
+        if self.verbose:
+            print(f"  Model: {self.model}")
         
         # Use shared training loop
         self._train_model_multistep(
@@ -274,3 +275,6 @@ class LiRNDDA(NDDBase):
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""
         return self.predict_multistep(X)
+    
+    def __str__(self):
+        return "LiRNDDA"

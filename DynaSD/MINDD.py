@@ -138,8 +138,9 @@ class MINDD(NDDBase):
             use_batch_norm=self.use_batch_norm
         ).to(self.device)
         
-        print(f"  Model: {self.model}")
-        print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        if self.verbose:
+            print(f"  Model: {self.model}")
+            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
         # Use shared training loop
         self._train_model_multistep(
@@ -249,4 +250,7 @@ class MINDD(NDDBase):
     
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""
-        return self.predict_multistep(X) 
+        return self.predict_multistep(X)
+    
+    def __str__(self):
+        return "MINDD"

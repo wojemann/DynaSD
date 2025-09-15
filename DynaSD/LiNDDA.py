@@ -109,8 +109,9 @@ class LiNDDA(NDDBase):
         ).to(self.device)
         
         # Initialize model
-        print(f"  Model: {self.model}")
-        print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        if self.verbose:
+            print(f"  Model: {self.model}")
+            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
         # Use shared training loop
         self._train_model_multistep(
@@ -220,3 +221,6 @@ class LiNDDA(NDDBase):
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""
         return self.predict_multistep(X)
+
+    def __str__(self):
+        return "LiNDDA"
