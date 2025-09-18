@@ -89,13 +89,15 @@ class WVNT(DynaSDBase):
     fs : int, default=128
         Sampling frequency for the model input
     """
-    def __init__(self, model_path = None, w_size=1, w_stride=0.5, fs=128):
+    def __init__(self, model_path = None, w_size=1, w_stride=0.5, fs=128, batch_size=32, verbose=False, **kwargs):
+        super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, **kwargs)
         """Initialize WaveNet wrapper with model and windowing parameters."""
         self.w_size = w_size
         self.w_stride = w_stride
         self.fs = fs
         self.model_path = model_path
-       
+        self.batch_size = batch_size
+        self.verbose = verbose
         if not TENSORFLOW_AVAILABLE:
             print("TensorFlow not available - cannot load WaveNet model")
 
@@ -151,9 +153,12 @@ class WVNT(DynaSDBase):
         # Apply normalization and prepare data for WaveNet
         x_normalized = pd.DataFrame(self.scaler.transform(x), columns=chs)
         x_prepared = self._prepare_wavenet_segment(x_normalized)
-        
+        if ~self.verbose:
+            verbocity = 0
+        else:
+            verbocity = 1
         # Generate predictions (get seizure probability from class 1)
-        y = self.mdl.predict(x_prepared)[:, 1]
+        y = self.mdl.predict(x_prepared,verbose=verbocity,batch_size=self.batch_size)[:, 1]
         
         # Reshape to windows x channels format and convert to DataFrame
         probabilities = y.reshape(nwins, nch)

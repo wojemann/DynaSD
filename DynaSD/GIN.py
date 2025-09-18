@@ -28,6 +28,13 @@ class MultiStepGRU(nn.Module):
         self.input_projection = nn.Linear(input_size, input_size)
         self.skip_weight = nn.Parameter(torch.tensor(residual_init))  # Learnable skip weight with custom initialization
         
+        # Per-timestep input projection with nonlinearity and normalization (D -> D)
+        self.input_stack = nn.Sequential(
+            nn.Linear(input_size, input_size),
+            nn.GELU(),
+            nn.LayerNorm(input_size)
+        )
+        
         self.projection = nn.Linear(hidden_size, input_size)
         
         # Initialize weights properly to prevent vanishing gradients
@@ -51,27 +58,41 @@ class MultiStepGRU(nn.Module):
         nn.init.xavier_uniform_(self.input_projection.weight, gain=1.0)
         nn.init.zeros_(self.input_projection.bias)
         
+        # Initialize input_stack's Linear layer
+        input_stack_linear = self.input_stack[0]
+        nn.init.xavier_uniform_(input_stack_linear.weight, gain=1.0)
+        nn.init.zeros_(input_stack_linear.bias)
+        
         nn.init.xavier_uniform_(self.projection.weight, gain=1.0)
         nn.init.zeros_(self.projection.bias)
     
     def forward(self, input_sequence, forecast_steps):
-        # Phase 1: Process input sequence
-        gru_output, hidden = self.gru(input_sequence)
+        # Phase 1: Process input sequence via per-timestep projection
+        projected_input = self.input_stack(input_sequence)  # (B, T, D)
+        gru_output, hidden = self.gru(projected_input)
         
         # Phase 2: Autoregressive forecasting
         forecasts = []
         current_hidden = hidden
         
         # Start with the first prediction from the final hidden state
-        first_prediction = self.projection(gru_output[:, -1:, :])
-        forecasts.append(first_prediction.squeeze(1))
-        current_input = first_prediction
+        first_prediction = self.projection(gru_output[:, -1:, :])  # (B, 1, D)
+        # Residual skip from the last data-space input
+        last_data_step = input_sequence[:, -1:, :]  # (B, 1, D)
+        first_prediction = first_prediction + self.skip_weight * self.input_projection(last_data_step)
+        forecasts.append(first_prediction.squeeze(1))  # (B, D)
+        current_input_data_space = first_prediction  # keep in data space (B, 1, D)
         
         for _ in range(forecast_steps - 1):  # Note: forecast_steps - 1
-            gru_output, current_hidden = self.gru(current_input, current_hidden)
-            prediction = self.projection(gru_output)
+            # Feed the projected current input to the GRU
+            gru_in = self.input_stack(current_input_data_space)  # (B, 1, D)
+            gru_output_step, current_hidden = self.gru(gru_in, current_hidden)
+            prediction = self.projection(gru_output_step)  # (B, 1, D)
+            # Residual skip from current data-space input
+            prediction = prediction + self.skip_weight * self.input_projection(current_input_data_space)
             forecasts.append(prediction.squeeze(1))
-            current_input = prediction
+            # Next step uses the data-space prediction
+            current_input_data_space = prediction
             
         return torch.stack(forecasts, dim=1)
 
@@ -148,7 +169,7 @@ class GIN(NDDBase):
     #     Run inference and return features aggregated into windows.
     #     1. Create sequences from continuous data and get per-channel losses
     #     2. Aggregate sequence-level losses into w_size/w_stride windows
-        
+            
     #     Returns:
     #         tuple: (mse_df, zcr_df, combined_df)
     #             - mse_df: DataFrame with MSE values, columns = channel names
