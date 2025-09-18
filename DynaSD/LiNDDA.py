@@ -10,37 +10,37 @@ import warnings
 from tqdm import tqdm
 from .utils import num_wins, MovingWinClips
 
-class SkLinearForecaster(LinearRegression):
-    def __init__(self, input_size, sequence_length):
-        super(SkLinearForecaster, self).__init__()
-        self.input_size = input_size
-        self.sequence_length = sequence_length
-        self.model = LinearRegression()
+# class SkLinearForecaster(LinearRegression):
+#     def __init__(self, input_size, sequence_length):
+#         super(SkLinearForecaster, self).__init__()
+#         self.input_size = input_size
+#         self.sequence_length = sequence_length
+#         self.model = LinearRegression()
     
-    def forward(self, input_sequence, forecast_steps):
-        """
-        Forward pass for linear forecasting.
+#     def forward(self, input_sequence, forecast_steps):
+#         """
+#         Forward pass for linear forecasting.
         
-        Args:
-            input_sequence: (batch_size, sequence_length, input_size)
-            forecast_steps: int (should equal sequence_length)
+#         Args:
+#             input_sequence: (batch_size, sequence_length, input_size)
+#             forecast_steps: int (should equal sequence_length)
         
-        Returns:
-            forecasts: (batch_size, sequence_length, input_size)
-        """
-        preds = []
-        current_input = input_sequence.clone()
-        for _ in range(forecast_steps):
-            batch_size = current_input.size(0)
-            flattened_input = current_input.view(batch_size, -1)
-            next_pred = self.model.predict(flattened_input)
-            preds.append(next_pred.unsqueeze(1))
-            if self.sequence_length > 1:
-                current_input = torch.cat([current_input[:, 1:, :], next_pred.unsqueeze(1)], dim=1)
-            else:
-                current_input = next_pred.unsqueeze(1)
-        forecasts = torch.cat(preds, dim=1)
-        return forecasts
+#         Returns:
+#             forecasts: (batch_size, sequence_length, input_size)
+#         """
+#         preds = []
+#         current_input = input_sequence.clone()
+#         for _ in range(forecast_steps):
+#             batch_size = current_input.size(0)
+#             flattened_input = current_input.view(batch_size, -1)
+#             next_pred = self.model.predict(flattened_input)
+#             preds.append(next_pred.unsqueeze(1))
+#             if self.sequence_length > 1:
+#                 current_input = torch.cat([current_input[:, 1:, :], next_pred.unsqueeze(1)], dim=1)
+#             else:
+#                 current_input = next_pred.unsqueeze(1)
+#         forecasts = torch.cat(preds, dim=1)
+#         return forecasts
 
 class LinearForecaster(nn.Module):
     """
@@ -120,7 +120,6 @@ class LiNDDA(NDDBase):
                  lr=0.01,
                  lambda_zcr=0.1,        # Weight for zero-crossing rate loss
                  use_cuda=False,
-                 use_sklearn=False,
                  **kwargs):
 
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
@@ -136,45 +135,35 @@ class LiNDDA(NDDBase):
     def fit(self, X):
         """Fit the Linear forecasting model using shared training loop"""
         input_size = X.shape[1]
-        if self.use_sklearn:
-            self.model = SkLinearForecaster(
-                input_size=input_size,
-                sequence_length=self.sequence_length
-            )
-            self.model.fit(X)
 
-        else:
-            self.model = LinearForecaster(
-                input_size=input_size,
-                sequence_length=self.sequence_length
-            ).to(self.device)
-            
-            # Initialize model
-            if self.verbose:
-                print(f"  Model: {self.model}")
-                print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-            
-            # Use shared training loop
-            self._train_model_multistep(
-                X=X,
-                model=self.model,
-                sequence_length=self.sequence_length,
-                forecast_length=1, # Train with teacher forcing
-                num_epochs=self.num_epochs,
-                batch_size=self.batch_size,
-                lr=self.lr,
-                early_stopping=self.early_stopping,
-                val_split=self.val_split,
-                patience=self.patience,
-                tolerance=self.tolerance
-            )
+        self.model = LinearForecaster(
+            input_size=input_size,
+            sequence_length=self.sequence_length
+        ).to(self.device)
+        
+        # Initialize model
+        if self.verbose:
+            print(f"  Model: {self.model}")
+            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        # Use shared training loop
+        self._train_model_multistep(
+            X=X,
+            model=self.model,
+            sequence_length=self.sequence_length,
+            forecast_length=1, # Train with teacher forcing
+            num_epochs=self.num_epochs,
+            batch_size=self.batch_size,
+            lr=self.lr,
+            early_stopping=self.early_stopping,
+            val_split=self.val_split,
+            patience=self.patience,
+            tolerance=self.tolerance
+        )
     
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""
-        if self.use_sklearn:
-            return self.model.predict(X)
-        else:
-            return self.predict_multistep(X)
+        return self.predict_multistep(X)
 
     def __str__(self):
         return "LiNDDA"
