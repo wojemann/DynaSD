@@ -195,7 +195,6 @@ Temporary Items
 *.xml
 *.yaml
 *.yml
-*.txt
 *.dat
 *.bin
 

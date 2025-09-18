@@ -11,8 +11,9 @@ from .ABSSLP import ABSSLP
 from .WAVENET import WVNT
 from .GIN import GIN
 from .LiNDDA import LiNDDA
-from .MINDA import MINDA
+from .MINDD import MINDD
 from .IMPRINT import IMPRINT
+from .LiRNDDA import LiRNDDA
 
 __version__ = "0.1.0"
-__all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN", "LiNDDA", "MINDA"] 
+__all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN", "LiNDDA", "MINDD","IMPRINT"] 

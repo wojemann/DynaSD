@@ -1,4 +1,4 @@
-from .NDDBase import NDDBase, zero_crossing_rate
+from .NDDBase import NDDBase
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -105,7 +105,8 @@ class NDD(NDDBase):
         if n_sequences <= 0:
             raise ValueError(f"Not enough data for even one sequence. Need at least {total_seq_length} samples.")
         
-        print(f"Creating {n_sequences} overlapping sequences for NDD (input=12, forecast=1)")
+        if self.verbose:
+            print(f"Creating {n_sequences} overlapping sequences for NDD (input=12, forecast=1)")
         
         all_inputs = []
         all_targets = []
@@ -128,6 +129,8 @@ class NDD(NDDBase):
                 'input_end': input_end,
                 'target_start': input_end,
                 'target_end': target_end,
+                'seq_time_start': seq_start / self.fs,
+                'seq_time_end': input_end / self.fs,
                 'input_time_start': seq_start / self.fs,
                 'target_time_start': input_end / self.fs
             })
@@ -139,9 +142,9 @@ class NDD(NDDBase):
             return input_data, target_data, seq_positions
         else:
             return input_data, target_data
-    
+
     def fit(self, X):
-        """Fit the NDD LSTM forecasting model using shared training loop"""
+        """Fit the LSTM forecasting model using shared training loop"""
         input_size = X.shape[1]
         
         # Initialize model
@@ -151,7 +154,9 @@ class NDD(NDDBase):
             num_layers=self.num_layers
         ).to(self.device)
         
-        print(f"  Model: {self.model}")
+        if self.verbose:
+            print(f"  Model: {self.model}")
+            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
         # Use shared training loop
         self._train_model_multistep(

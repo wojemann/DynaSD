@@ -1,32 +1,60 @@
 from .NDDBase import NDDBase
 import torch
 import torch.nn as nn
-import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import pandas as pd
-import warnings
-from tqdm import tqdm
-from .utils import num_wins, MovingWinClips
+from .utils import num_wins
 
-class MultiStepGRU(nn.Module):
-    """GRU with residual connections to bypass saturation"""
-    def __init__(self, input_size, hidden_size, num_layers=1, residual_init=0.5):
-        super(MultiStepGRU, self).__init__()
+
+class LinearRNNLayer(nn.Module):
+    """Single Linear RNN layer without gating mechanisms"""
+    def __init__(self, input_size, hidden_size, decay_init=0.9):
+        super(LinearRNNLayer, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        
+        # Linear transformations for this layer
+        self.input_linear = nn.Linear(input_size, hidden_size)
+        self.hidden_linear = nn.Linear(hidden_size, hidden_size, bias=False)
+        
+        # Learnable decay parameter for this layer
+        self.decay = nn.Parameter(torch.tensor(decay_init))
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights for this layer"""
+        nn.init.xavier_uniform_(self.input_linear.weight, gain=1.0)
+        nn.init.zeros_(self.input_linear.bias)
+        nn.init.orthogonal_(self.hidden_linear.weight, gain=0.8)
+        
+        # Initialize decay parameter to stable range
+        with torch.no_grad():
+            self.decay.data.clamp_(0.1, 0.99)
+    
+    def forward(self, input_x, hidden_state):
+        """Forward pass for single time step"""
+        # Linear recurrence: h_t = decay * W_h * h_{t-1} + W_i * x_t
+        new_hidden = (self.decay * self.hidden_linear(hidden_state) + 
+                     self.input_linear(input_x))
+        return new_hidden
+
+
+class MultiStepLinearRNN(nn.Module):
+    """Linear RNN without gating mechanisms to preserve high-frequency dynamics"""
+    def __init__(self, input_size, hidden_size, num_layers=1, decay_init=0.9, residual_init=0.5):
+        super(MultiStepLinearRNN, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
-        self.gru = nn.GRU(
-            input_size=input_size,
-            hidden_size=hidden_size, 
-            num_layers=num_layers,
-            batch_first=True
-        )
-        
-        # Skip connection projections
-        self.input_projection = nn.Linear(input_size, input_size)
-        self.skip_weight = nn.Parameter(torch.tensor(residual_init))  # Learnable skip weight with custom initialization
+        # Create layers with proper input sizing
+        self.layers = nn.ModuleList()
+        for i in range(num_layers):
+            # First layer takes input_size, subsequent layers take hidden_size
+            layer_input_size = input_size if i == 0 else hidden_size
+            self.layers.append(LinearRNNLayer(layer_input_size, hidden_size, decay_init))
         
         # Per-timestep input projection with nonlinearity and normalization (D -> D)
         self.input_stack = nn.Sequential(
@@ -35,75 +63,97 @@ class MultiStepGRU(nn.Module):
             nn.LayerNorm(input_size)
         )
         
+        # Skip connection projections
+        self.input_projection = nn.Linear(input_size, input_size)
+        self.skip_weight = nn.Parameter(torch.tensor(residual_init))  # Learnable skip weight with custom initialization
+        
+        # Output projection (same as MultiStepGRU)
         self.projection = nn.Linear(hidden_size, input_size)
         
         # Initialize weights properly to prevent vanishing gradients
         self._init_weights()
-    
+
     def _init_weights(self):
-        """Initialize weights to prevent vanishing gradients and state collapse"""
-        # Initialize GRU weights
-        for name, param in self.gru.named_parameters():
-            if 'weight_ih' in name:  # Input-to-hidden weights
-                nn.init.xavier_uniform_(param, gain=1.0)
-            elif 'weight_hh' in name:  # Hidden-to-hidden weights
-                nn.init.orthogonal_(param, gain=1.0)  # Orthogonal helps with long sequences
-            elif 'bias' in name:
-                nn.init.zeros_(param)
-                # Set update gate bias to 1 for better gradient flow
-                if 'bias_ih' in name:
-                    param.data[param.size(0)//3:2*param.size(0)//3] = 1.0
-        
-        # Initialize linear layer weights
-        nn.init.xavier_uniform_(self.input_projection.weight, gain=1.0)
-        nn.init.zeros_(self.input_projection.bias)
+        """Initialize weights for projection layers"""
+        # Note: Individual layer weights are initialized in LinearRNNLayer.__init__
         
         # Initialize input_stack's Linear layer
         input_stack_linear = self.input_stack[0]
         nn.init.xavier_uniform_(input_stack_linear.weight, gain=1.0)
         nn.init.zeros_(input_stack_linear.bias)
         
+        # Initialize skip connection weights
+        nn.init.xavier_uniform_(self.input_projection.weight, gain=1.0)
+        nn.init.zeros_(self.input_projection.bias)
+        
+        # Initialize projection layer weights
         nn.init.xavier_uniform_(self.projection.weight, gain=1.0)
         nn.init.zeros_(self.projection.bias)
-    
+
     def forward(self, input_sequence, forecast_steps):
-        # Phase 1: Process input sequence via per-timestep projection
+        batch_size, seq_len, _ = input_sequence.shape
+        
+        # Phase 1: Process input sequence through per-timestep projection
         projected_input = self.input_stack(input_sequence)  # (B, T, D)
-        gru_output, hidden = self.gru(projected_input)
         
-        # Phase 2: Autoregressive forecasting
+        # Phase 2: Process projected sequence through all layers
+        # Initialize hidden states for all layers
+        hidden_states = [torch.zeros(batch_size, self.hidden_size, device=input_sequence.device)
+                        for _ in range(self.num_layers)]
+        
+        for t in range(seq_len):
+            # Pass projected input through each layer sequentially
+            layer_input = projected_input[:, t, :]
+            for layer_idx in range(self.num_layers):
+                # For layer 0, use projected sequence input; for others, use previous layer's output
+                current_input = layer_input if layer_idx == 0 else hidden_states[layer_idx-1]
+                # Update this layer's hidden state
+                hidden_states[layer_idx] = self.layers[layer_idx](current_input, hidden_states[layer_idx])
+        
+        # Phase 3: Autoregressive forecasting with skip connections
         forecasts = []
-        current_hidden = hidden
         
-        # Start with the first prediction from the final hidden state
-        first_prediction = self.projection(gru_output[:, -1:, :])  # (B, 1, D)
+        # First prediction: Project the final hidden state from the last timestep
+        first_prediction = self.projection(hidden_states[-1])  # (B, D)
         # Residual skip from the last data-space input
-        last_data_step = input_sequence[:, -1:, :]  # (B, 1, D)
+        last_data_step = input_sequence[:, -1, :]  # (B, D)
         first_prediction = first_prediction + self.skip_weight * self.input_projection(last_data_step)
-        forecasts.append(first_prediction.squeeze(1))  # (B, D)
-        current_input_data_space = first_prediction  # keep in data space (B, 1, D)
+        forecasts.append(first_prediction)
+        
+        # Use first prediction as input for remaining steps
+        current_input_data_space = first_prediction  # keep in data space (B, D)
         
         for _ in range(forecast_steps - 1):  # Note: forecast_steps - 1
-            # Feed the projected current input to the GRU
-            gru_in = self.input_stack(current_input_data_space)  # (B, 1, D)
-            gru_output_step, current_hidden = self.gru(gru_in, current_hidden)
-            prediction = self.projection(gru_output_step)  # (B, 1, D)
+            # Project the current data-space input
+            projected_current = self.input_stack(current_input_data_space.unsqueeze(1)).squeeze(1)  # (B, D)
+            
+            # Pass through all layers
+            layer_input = projected_current
+            for layer_idx in range(self.num_layers):
+                # For layer 0, use projected current input; for others, use previous layer's output
+                step_input = layer_input if layer_idx == 0 else hidden_states[layer_idx-1]
+                # Update this layer's hidden state
+                hidden_states[layer_idx] = self.layers[layer_idx](step_input, hidden_states[layer_idx])
+            
+            # Project from final layer's output to prediction space
+            prediction = self.projection(hidden_states[-1])  # (B, D)
             # Residual skip from current data-space input
             prediction = prediction + self.skip_weight * self.input_projection(current_input_data_space)
-            forecasts.append(prediction.squeeze(1))
+            forecasts.append(prediction)
             # Next step uses the data-space prediction
             current_input_data_space = prediction
-            
+        
         return torch.stack(forecasts, dim=1)
 
-class GIN(NDDBase):
+class LiRNDDA(NDDBase):
     """
-    GIN (Gated recurrent unit with Integrated spatio-temporal modeling of Neural dynamic divergence) 
-    simplified model following NDD pattern.
+    LinearRNN (Linear Recurrent Neural Network) model for EEG forecasting.
+    Removes gating mechanisms to preserve high-frequency dynamics that are 
+    often suppressed in GRU/LSTM architectures.
     """
 
     def __init__(self, 
-                 hidden_size=10,
+                 hidden_size=64,
                  num_layers=1,
                  fs=256,
                  sequence_length=16,
@@ -119,7 +169,7 @@ class GIN(NDDBase):
 
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
         
-        # Store parameters - input_length == forecast_horizon for simplicity
+        # Store parameters
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.sequence_length = sequence_length
@@ -134,11 +184,11 @@ class GIN(NDDBase):
         return self._prepare_multistep_sequences(data, self.sequence_length, self.forecast_length, ret_positions)
     
     def fit(self, X):
-        """Fit the GRU forecasting model using shared training loop"""
+        """Fit the Linear RNN forecasting model using shared training loop"""
         input_size = X.shape[1]
         
         # Initialize model
-        self.model = MultiStepGRU(
+        self.model = MultiStepLinearRNN(
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
@@ -147,7 +197,6 @@ class GIN(NDDBase):
         
         if self.verbose:
             print(f"  Model: {self.model}")
-            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
         # Use shared training loop
         self._train_model_multistep(
@@ -169,12 +218,11 @@ class GIN(NDDBase):
     #     Run inference and return features aggregated into windows.
     #     1. Create sequences from continuous data and get per-channel losses
     #     2. Aggregate sequence-level losses into w_size/w_stride windows
-            
+        
     #     Returns:
-    #         tuple: (mse_df, zcr_df, combined_df)
+    #         tuple: (mse_df, corr_df)
     #             - mse_df: DataFrame with MSE values, columns = channel names
-    #             - zcr_df: DataFrame with ZCR values, columns = channel names  
-    #             - combined_df: DataFrame with combined loss values, columns = channel names
+    #             - corr_df: DataFrame with correlation values, columns = channel names  
     #     """        
     #     X_scaled = self._scaler_transform(X)
     #     input_data, target_data, seq_positions = self._prepare_sequences(X_scaled, ret_positions=True)
@@ -198,9 +246,9 @@ class GIN(NDDBase):
     #             predictions = self.model(inputs, self.forecast_length)
                 
     #             # Calculate per-channel losses for each sequence in batch
-    #             batch_size, _, _ = predictions.shape
+    #             batch_size_actual, _, _ = predictions.shape
                 
-    #             for batch_idx in range(batch_size):
+    #             for batch_idx in range(batch_size_actual):
     #                 seq_idx = batch_start + batch_idx
     #                 seq_pos = seq_positions[seq_idx]
                     
@@ -217,7 +265,7 @@ class GIN(NDDBase):
     #                     'mse': mse,
     #                 })
                 
-    #             batch_start += batch_size
+    #             batch_start += batch_size_actual
         
     #     # Now aggregate sequence results into windows
     #     mse_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)
@@ -225,15 +273,10 @@ class GIN(NDDBase):
     
     def forward(self, X):
         """
-        Run inference and return features aggregated into windows.
-        1. Create sequences from continuous data and get per-channel losses
-        2. Aggregate sequence-level losses into w_size/w_stride windows
+        Run inference and return neural dynamic divergence features.
         
         Returns:
-            tuple: (mse_df, zcr_df, combined_df)
-                - mse_df: DataFrame with MSE values, columns = channel names
-                - zcr_df: DataFrame with ZCR values, columns = channel names  
-                - combined_df: DataFrame with combined loss values, columns = channel names
+            DataFrame: NDD values with columns = channel names
         """
         assert self.is_fitted, "Must fit model before running inference"
         mse_df, corr_df = self._get_features(X)
@@ -263,4 +306,4 @@ class GIN(NDDBase):
         return self.predict_multistep(X)
     
     def __str__(self):
-        return "GIN"
+        return "LiRNDDA"
