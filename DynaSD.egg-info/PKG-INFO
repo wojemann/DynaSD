@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: DynaSD
+Version: 0.1.0
+Summary: Dynamic Seizure Detection Package
+Requires-Python: >=3.7
+Requires-Dist: torch
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scikit-learn
+Requires-Dist: matplotlib
+Requires-Dist: tqdm
+Requires-Dist: h5py
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
