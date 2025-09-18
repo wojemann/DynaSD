@@ -10,6 +10,38 @@ import warnings
 from tqdm import tqdm
 from .utils import num_wins, MovingWinClips
 
+class SkLinearForecaster(LinearRegression):
+    def __init__(self, input_size, sequence_length):
+        super(SkLinearForecaster, self).__init__()
+        self.input_size = input_size
+        self.sequence_length = sequence_length
+        self.model = LinearRegression()
+    
+    def forward(self, input_sequence, forecast_steps):
+        """
+        Forward pass for linear forecasting.
+        
+        Args:
+            input_sequence: (batch_size, sequence_length, input_size)
+            forecast_steps: int (should equal sequence_length)
+        
+        Returns:
+            forecasts: (batch_size, sequence_length, input_size)
+        """
+        preds = []
+        current_input = input_sequence.clone()
+        for _ in range(forecast_steps):
+            batch_size = current_input.size(0)
+            flattened_input = current_input.view(batch_size, -1)
+            next_pred = self.model.predict(flattened_input)
+            preds.append(next_pred.unsqueeze(1))
+            if self.sequence_length > 1:
+                current_input = torch.cat([current_input[:, 1:, :], next_pred.unsqueeze(1)], dim=1)
+            else:
+                current_input = next_pred.unsqueeze(1)
+        forecasts = torch.cat(preds, dim=1)
+        return forecasts
+
 class LinearForecaster(nn.Module):
     """
     Simple linear regression model for multi-step forecasting.
@@ -88,6 +120,7 @@ class LiNDDA(NDDBase):
                  lr=0.01,
                  lambda_zcr=0.1,        # Weight for zero-crossing rate loss
                  use_cuda=False,
+                 use_sklearn=False,
                  **kwargs):
 
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
@@ -103,124 +136,45 @@ class LiNDDA(NDDBase):
     def fit(self, X):
         """Fit the Linear forecasting model using shared training loop"""
         input_size = X.shape[1]
-        self.model = LinearForecaster(
-            input_size=input_size,
-            sequence_length=self.sequence_length
-        ).to(self.device)
-        
-        # Initialize model
-        if self.verbose:
-            print(f"  Model: {self.model}")
-            print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        
-        # Use shared training loop
-        self._train_model_multistep(
-            X=X,
-            model=self.model,
-            sequence_length=self.sequence_length,
-            forecast_length=1, # Train with teacher forcing
-            num_epochs=self.num_epochs,
-            batch_size=self.batch_size,
-            lr=self.lr,
-            early_stopping=self.early_stopping,
-            val_split=self.val_split,
-            patience=self.patience,
-            tolerance=self.tolerance
-        )
-        
-    # def _get_features(self, X):
-    #     """
-    #     Run inference and return features aggregated into windows.
-    #     1. Create sequences from continuous data and get per-channel losses
-    #     2. Aggregate sequence-level losses into w_size/w_stride windows
-        
-    #     Returns:
-    #         tuple: (mse_df, corr_df)
-    #             - mse_df: DataFrame with MSE values, columns = channel names
-    #             - corr_df: DataFrame with correlation values, columns = channel names
-    #     """
-    #     X_scaled = self._scaler_transform(X)
-    #     input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
-        
-    #     # Create dataset and dataloader
-    #     dataset = TensorDataset(input_data, target_data)
-    #     batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-    #     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-        
-    #     # Run inference to get sequence-level predictions
-    #     self.model.eval()
-    #     seq_results = []
-        
-    #     with torch.no_grad():
-    #         batch_start = 0
-    #         for inputs, targets in dataloader:
-    #             inputs = inputs.to(self.device)
-    #             targets = targets.to(self.device)
-                
-    #             # Get predictions
-    #             predictions = self.model(inputs, self.forecast_length)
-                
-    #             # Calculate per-channel losses for each sequence in batch
-    #             batch_size_actual, seq_len, n_channels = predictions.shape
-                
-    #             for batch_idx in range(batch_size_actual):
-    #                 seq_idx = batch_start + batch_idx
-    #                 seq_pos = seq_positions[seq_idx]
-                    
-    #                 # MSE per channel for this sequence
-    #                 mse = torch.mean((predictions[batch_idx] - targets[batch_idx]) ** 2, dim=0).cpu().numpy()
-                    
-    #                 # Store results with temporal position and sequences for correlation
-    #                 seq_results.append({
-    #                     'seq_idx': seq_idx,
-    #                     'target_start_time': seq_pos['target_time_start'],
-    #                     'target_end_time': seq_pos['target_time_start'] + self.forecast_length / self.fs,
-    #                     'mse': np.sqrt(mse),
-    #                     'predicted_seq': predictions[batch_idx].cpu().numpy(),
-    #                     'target_seq': targets[batch_idx].cpu().numpy()
-    #                 })
-                
-    #             batch_start += batch_size_actual
-        
-    #     # Now aggregate sequence results into windows
-    #     mse_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)
-    #     return mse_df, corr_df
+        if self.use_sklearn:
+            self.model = SkLinearForecaster(
+                input_size=input_size,
+                sequence_length=self.sequence_length
+            )
+            self.model.fit(X)
 
-    # def forward(self, X):
-    #     """
-    #     Run inference and return features aggregated into windows.
-    #     1. Create sequences from continuous data and get per-channel losses
-    #     2. Aggregate sequence-level losses into w_size/w_stride windows
-        
-    #     Returns:
-    #         ndd_df: DataFrame with NDD values, columns = channel names
-    #     """
-    #     assert self.is_fitted, "Must fit model before running inference"
-    #     mse_df, corr_df = self._get_features(X)
-    #     ndd = pd.DataFrame()
-    #     for ch in X.columns:
-    #         mse_y = mse_df[ch].to_numpy().reshape(-1,1)
-    #         corr_y = corr_df[ch].to_numpy().reshape(-1,1)
-    #         f = np.concatenate((mse_y,corr_y),axis=1)
-    #         m = self.dist_params[ch]['m']
-    #         R = self.dist_params[ch]['R']
-    #         ri = np.linalg.solve(R.T, (f - m).T)
-    #         ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
-        
-    #     # Store window times for compatibility with other models
-    #     nwins = num_wins(len(X), self.fs, self.w_size, self.w_stride)
-    #     self.time_wins = np.array([win_idx * self.w_stride for win_idx in range(nwins)])
-        
-    #     # Store for backward compatibility
-    #     self.mse_df = mse_df
-    #     self.corr_df = corr_df
-    #     self.ndd_df = ndd
-
-    #     return self.ndd_df
+        else:
+            self.model = LinearForecaster(
+                input_size=input_size,
+                sequence_length=self.sequence_length
+            ).to(self.device)
+            
+            # Initialize model
+            if self.verbose:
+                print(f"  Model: {self.model}")
+                print(f"  Parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+            
+            # Use shared training loop
+            self._train_model_multistep(
+                X=X,
+                model=self.model,
+                sequence_length=self.sequence_length,
+                forecast_length=1, # Train with teacher forcing
+                num_epochs=self.num_epochs,
+                batch_size=self.batch_size,
+                lr=self.lr,
+                early_stopping=self.early_stopping,
+                val_split=self.val_split,
+                patience=self.patience,
+                tolerance=self.tolerance
+            )
     
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""
-        return self.predict_multistep(X)
+        if self.use_sklearn:
+            return self.model.predict(X)
+        else:
+            return self.predict_multistep(X)
 
     def __str__(self):
         return "LiNDDA"
