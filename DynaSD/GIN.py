@@ -11,12 +11,12 @@ from .utils import num_wins, MovingWinClips
 
 class MultiStepGRU(nn.Module):
     """GRU with residual connections to bypass saturation"""
-    def __init__(self, input_size, hidden_size, num_layers=1, residual_init=0.5):
+    def __init__(self, input_size, hidden_size, num_layers=1, num_stacks=1, residual_init=0.5):
         super(MultiStepGRU, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        
+        self.num_stacks = num_stacks
         self.gru = nn.GRU(
             input_size=input_size,
             hidden_size=hidden_size, 
@@ -29,11 +29,22 @@ class MultiStepGRU(nn.Module):
         self.skip_weight = nn.Parameter(torch.tensor(residual_init))  # Learnable skip weight with custom initialization
         
         # Per-timestep input projection with nonlinearity and normalization (D -> D)
-        self.input_stack = nn.Sequential(
-            nn.Linear(input_size, input_size),
-            nn.GELU(),
-            nn.LayerNorm(input_size)
-        )
+        # Build a stack of num_stacks layers, each: Linear(input_size, input_size*2) -> GELU -> LayerNorm(input_size*2)
+        # except the last, which is Linear(input_size*2, input_size) -> GELU -> LayerNorm(input_size)
+        input_stack_layers = []
+        for i in range(self.num_stacks):
+            if i == 0:
+                in_dim = self.input_size
+            else:
+                in_dim = self.input_size * 2
+            if i == self.num_stacks - 1:
+                out_dim = self.input_size
+            else:
+                out_dim = self.input_size * 2
+            input_stack_layers.append(nn.Linear(in_dim, out_dim))
+            input_stack_layers.append(nn.GELU())
+            input_stack_layers.append(nn.LayerNorm(out_dim))
+        self.input_stack = nn.Sequential(*input_stack_layers)
         
         self.projection = nn.Linear(hidden_size, input_size)
         

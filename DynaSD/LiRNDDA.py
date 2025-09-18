@@ -43,12 +43,12 @@ class LinearRNNLayer(nn.Module):
 
 class MultiStepLinearRNN(nn.Module):
     """Linear RNN without gating mechanisms to preserve high-frequency dynamics"""
-    def __init__(self, input_size, hidden_size, num_layers=1, decay_init=0.9, residual_init=0.5):
+    def __init__(self, input_size, hidden_size, num_layers=1, num_stacks=1, decay_init=0.9, residual_init=0.5):
         super(MultiStepLinearRNN, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        
+        self.num_stacks = num_stacks
         # Create layers with proper input sizing
         self.layers = nn.ModuleList()
         for i in range(num_layers):
@@ -57,11 +57,20 @@ class MultiStepLinearRNN(nn.Module):
             self.layers.append(LinearRNNLayer(layer_input_size, hidden_size, decay_init))
         
         # Per-timestep input projection with nonlinearity and normalization (D -> D)
-        self.input_stack = nn.Sequential(
-            nn.Linear(input_size, input_size),
-            nn.GELU(),
-            nn.LayerNorm(input_size)
-        )
+        input_stack_layers = []
+        for i in range(self.num_stacks):
+            if i == 0:
+                in_dim = self.input_size
+            else:
+                in_dim = self.input_size * 2
+            if i == self.num_stacks - 1:
+                out_dim = self.input_size
+            else:
+                out_dim = self.input_size * 2
+            input_stack_layers.append(nn.Linear(in_dim, out_dim))
+            input_stack_layers.append(nn.GELU())
+            input_stack_layers.append(nn.LayerNorm(out_dim))
+        self.input_stack = nn.Sequential(*input_stack_layers)
         
         # Skip connection projections
         self.input_projection = nn.Linear(input_size, input_size)
