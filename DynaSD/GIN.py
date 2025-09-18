@@ -126,6 +126,7 @@ class GIN(NDDBase):
                  lr=0.01,
                  residual_init=0.5,     # Initial value for residual connection weight
                  use_cuda=False,
+                 num_stacks=1,
                  **kwargs):
 
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
@@ -133,6 +134,7 @@ class GIN(NDDBase):
         # Store parameters - input_length == forecast_horizon for simplicity
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.num_stacks = num_stacks
         self.sequence_length = sequence_length
         self.forecast_length = forecast_length
         self.num_epochs = num_epochs
@@ -153,6 +155,7 @@ class GIN(NDDBase):
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
+            num_stacks=self.num_stacks,
             residual_init=self.residual_init
         ).to(self.device)
         

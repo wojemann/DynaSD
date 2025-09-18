@@ -164,6 +164,7 @@ class LiRNDDA(NDDBase):
     def __init__(self, 
                  hidden_size=64,
                  num_layers=1,
+                 num_stacks=1,
                  fs=256,
                  sequence_length=16,
                  forecast_length=16,
@@ -181,6 +182,7 @@ class LiRNDDA(NDDBase):
         # Store parameters
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.num_stacks = num_stacks
         self.sequence_length = sequence_length
         self.forecast_length = forecast_length
         self.num_epochs = num_epochs
@@ -201,6 +203,7 @@ class LiRNDDA(NDDBase):
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers,
+            num_stacks=self.num_stacks,
             residual_init=self.residual_init
         ).to(self.device)
         
