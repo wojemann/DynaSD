@@ -19,7 +19,7 @@ class NDDBase(DynaSDBase):
         # Extract training-specific parameters before passing to parent
         training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
                           'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
-                          'grad_accumulation_steps','compile_model']
+                          'grad_accumulation_steps']
         training_kwargs = {}
         
         for param in training_params:
@@ -52,9 +52,6 @@ class NDDBase(DynaSDBase):
         self.persistent_workers = training_kwargs.get('persistent_workers', True)
         self.prefetch_factor = training_kwargs.get('prefetch_factor', 3)  # Reduce for memory efficiency
         self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
-        
-        # CPU optimization for small models
-        self.compile_model = training_kwargs.get('compile_model', False)  # torch.compile for PyTorch 2.0+
     
 
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
@@ -81,15 +78,7 @@ class NDDBase(DynaSDBase):
             print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
             print(f"  DataLoader workers: {self.num_workers}")
         
-        # Optimize model for small architectures
-        if self.compile_model and hasattr(torch, 'compile'):
-            try:
-                model = torch.compile(model, mode='default')
-                if self.verbose:
-                    print(f"  Model compiled with torch.compile")
-            except Exception as e:
-                if self.verbose:
-                    print(f"  Model compilation failed: {e}")
+
         
         input_size = X.shape[1]
         

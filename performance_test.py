@@ -143,18 +143,32 @@ def test_performance_configs():
             }
         },
         {
-            'name': 'Full Optimization (All Features)',
+            'name': 'Optimal Configuration (Based on Results)',
             'params': {
                 'use_cuda': True,
                 'batch_size': 1024,
                 'num_epochs': 5,
                 'sequence_length': 64,
                 'forecast_length': 16,
-                'num_workers': 12,
+                'num_workers': 8,  # Sweet spot from results
                 'pin_memory': True,
                 'persistent_workers': True,
                 'prefetch_factor': 3,
-                'compile_model': True,  # Enable torch.compile
+                'verbose': True
+            }
+        },
+        {
+            'name': 'Ultra Large Batch Test',
+            'params': {
+                'use_cuda': True,
+                'batch_size': 4096,  # Test much larger batch with available GPU memory
+                'num_epochs': 5,
+                'sequence_length': 64,
+                'forecast_length': 16,
+                'num_workers': 8,
+                'pin_memory': True,
+                'persistent_workers': True,
+                'prefetch_factor': 2,  # Lower prefetch for large batches
                 'verbose': True
             }
         }
