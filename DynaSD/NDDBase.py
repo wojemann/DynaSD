@@ -19,7 +19,7 @@ class NDDBase(DynaSDBase):
         # Extract training-specific parameters before passing to parent
         training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
                           'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
-                          'use_amp', 'grad_accumulation_steps']
+                          'grad_accumulation_steps']
         training_kwargs = {}
         
         for param in training_params:
@@ -44,18 +44,19 @@ class NDDBase(DynaSDBase):
         self.tolerance = training_kwargs.get('tolerance', 1e-4)
         self.verbose = training_kwargs.get('verbose', True)
         
-        # Performance optimization parameters
-        self.num_workers = training_kwargs.get('num_workers', min(16, torch.get_num_threads()))
+        # Performance optimization parameters for smaller models
+        # Scale workers based on available cores - more workers for data loading efficiency
+        default_workers = min(12, torch.get_num_threads()) if torch.get_num_threads() >= 8 else 4
+        self.num_workers = training_kwargs.get('num_workers', default_workers)
         self.pin_memory = training_kwargs.get('pin_memory', use_cuda and torch.cuda.is_available())
         self.persistent_workers = training_kwargs.get('persistent_workers', True)
-        self.prefetch_factor = training_kwargs.get('prefetch_factor', 4)
-        self.use_amp = training_kwargs.get('use_amp', use_cuda and torch.cuda.is_available())
+        self.prefetch_factor = training_kwargs.get('prefetch_factor', 3)  # Reduce for memory efficiency
         self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
         
-        # Mixed precision scaler for A40 GPU optimization (separate from data scaler)
-        if self.use_amp:
-            self.grad_scaler = torch.cuda.amp.GradScaler()
-        
+        # CPU optimization for small models
+        self.compile_model = training_kwargs.get('compile_model', False)  # torch.compile for PyTorch 2.0+
+    
+
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
         """
@@ -77,6 +78,18 @@ class NDDBase(DynaSDBase):
             print(f"Training {model.__class__.__name__} model:")
             print(f"  Sequence length: {sequence_length}, Forecast length: {forecast_length}")
             print(f"  Early stopping: {early_stopping}")
+            print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+            print(f"  DataLoader workers: {self.num_workers}")
+        
+        # Optimize model for small architectures
+        if self.compile_model and hasattr(torch, 'compile'):
+            try:
+                model = torch.compile(model, mode='default')
+                if self.verbose:
+                    print(f"  Model compiled with torch.compile")
+            except Exception as e:
+                if self.verbose:
+                    print(f"  Model compilation failed: {e}")
         
         input_size = X.shape[1]
         
@@ -154,9 +167,14 @@ class NDDBase(DynaSDBase):
             
             val_dataloader = DataLoader(val_dataset, **val_dataloader_kwargs)
         
-        # Setup training
+        # Setup training with optimizations for smaller models
         mse_criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        # Use AdamW with weight decay for better generalization in smaller models
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        
+        # Enable optimized attention if available (PyTorch 2.0+)
+        if hasattr(torch.backends, 'opt_einsum') and torch.backends.opt_einsum.enabled:
+            torch.backends.opt_einsum.enabled = True
         
         # Early stopping variables
         best_val_loss = float('inf')
@@ -179,34 +197,26 @@ class NDDBase(DynaSDBase):
                 inputs = inputs.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
-                # Mixed precision forward pass
-                if self.use_amp:
-                    with torch.cuda.amp.autocast():
-                        predictions = model(inputs, forecast_length)
-                        mse_loss = mse_criterion(predictions, targets)
-                        mse_loss = mse_loss / self.grad_accumulation_steps
-                    
-                    # Scaled backward pass
-                    self.grad_scaler.scale(mse_loss).backward()
-                    
-                    # Gradient accumulation
-                    if (batch_idx + 1) % self.grad_accumulation_steps == 0:
-                        self.grad_scaler.step(optimizer)
-                        self.grad_scaler.update()
-                        optimizer.zero_grad()
-                else:
-                    # Standard training
-                    predictions = model(inputs, forecast_length)
-                    mse_loss = mse_criterion(predictions, targets)
-                    mse_loss = mse_loss / self.grad_accumulation_steps
-                    mse_loss.backward()
-                    
-                    # Gradient accumulation
-                    if (batch_idx + 1) % self.grad_accumulation_steps == 0:
-                        optimizer.step()
-                        optimizer.zero_grad()
+                # Forward pass
+                predictions = model(inputs, forecast_length)
+                mse_loss = mse_criterion(predictions, targets)
+                mse_loss = mse_loss / self.grad_accumulation_steps
+                mse_loss.backward()
+                
+                # Gradient accumulation
+                if (batch_idx + 1) % self.grad_accumulation_steps == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
                 
                 epoch_losses.append(mse_loss.item() * self.grad_accumulation_steps)
+                
+                # Memory management for long training runs
+                if batch_idx % 50 == 0:
+                    # Clear CUDA cache periodically
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    # Delete temporary variables to help garbage collection
+                    del predictions, mse_loss
             
             avg_train_loss = np.mean(epoch_losses)
             
@@ -220,14 +230,8 @@ class NDDBase(DynaSDBase):
                         inputs = inputs.to(self.device, non_blocking=True)
                         targets = targets.to(self.device, non_blocking=True)
                         
-                        # Use mixed precision for validation too
-                        if self.use_amp:
-                            with torch.cuda.amp.autocast():
-                                predictions = model(inputs, forecast_length)
-                                mse_loss = mse_criterion(predictions, targets)
-                        else:
-                            predictions = model(inputs, forecast_length)
-                            mse_loss = mse_criterion(predictions, targets)
+                        predictions = model(inputs, forecast_length)
+                        mse_loss = mse_criterion(predictions, targets)
                         val_losses.append(mse_loss.item())
                 
                 avg_val_loss = np.mean(val_losses)
@@ -408,12 +412,8 @@ class NDDBase(DynaSDBase):
                 inputs = inputs.to(self.device, non_blocking=True)
                 targets = targets.to(self.device, non_blocking=True)
                 
-                # Get predictions with mixed precision
-                if self.use_amp:
-                    with torch.cuda.amp.autocast():
-                        predictions = self.model(inputs, self.forecast_length)
-                else:
-                    predictions = self.model(inputs, self.forecast_length)
+                # Get predictions
+                predictions = self.model(inputs, self.forecast_length)
                 
                 # Calculate per-channel losses for each sequence in batch
                 batch_size_actual, seq_len, n_channels = predictions.shape

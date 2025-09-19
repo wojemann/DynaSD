@@ -77,7 +77,6 @@ def test_performance_configs():
                 'forecast_length': 8,
                 'num_workers': 0,
                 'pin_memory': False,
-                'use_amp': False,
                 'verbose': False
             }
         },
@@ -92,42 +91,71 @@ def test_performance_configs():
                 'num_workers': 8,
                 'pin_memory': True,
                 'persistent_workers': True,
-                'prefetch_factor': 4,
-                'use_amp': False,
+                'prefetch_factor': 3,
                 'verbose': False
             }
         },
         {
-            'name': 'Full Optimization (AMP + DataLoader)',
+            'name': 'Large Batch Optimized',
             'params': {
                 'use_cuda': True,
-                'batch_size': 1024,
+                'batch_size': 2048,  # Larger batch for better GPU utilization
                 'num_epochs': 5,
                 'sequence_length': 32,
                 'forecast_length': 8,
-                'num_workers': 8,
+                'num_workers': 12,
                 'pin_memory': True,
                 'persistent_workers': True,
-                'prefetch_factor': 4,
-                'use_amp': True,
+                'prefetch_factor': 3,
                 'verbose': False
             }
         },
         {
-            'name': 'Large Sequence (optimized)',
+            'name': 'Long Sequence (optimized)',
             'params': {
                 'use_cuda': True,
-                'batch_size': 512,  # Smaller batch for larger sequences
+                'batch_size': 512,  # Smaller batch for longer sequences
                 'num_epochs': 3,
-                'sequence_length': 128,  # Much larger sequence
+                'sequence_length': 128,  # Much longer sequence
                 'forecast_length': 32,
                 'num_workers': 8,
                 'pin_memory': True,
                 'persistent_workers': True,
-                'prefetch_factor': 4,
-                'use_amp': True,
+                'prefetch_factor': 2,  # Reduce for memory efficiency
                 'grad_accumulation_steps': 2,  # Simulate larger effective batch
-                'verbose': False
+                'verbose': True
+            }
+        },
+        {
+            'name': 'Large Model (200k params)',
+            'params': {
+                'use_cuda': True,
+                'batch_size': 256,
+                'num_epochs': 3,
+                'sequence_length': 64,
+                'forecast_length': 16,
+                'hidden_sizes': [512, 256, 128],  # ~200k parameters
+                'num_workers': 8,
+                'pin_memory': True,
+                'persistent_workers': True,
+                'prefetch_factor': 2,
+                'verbose': True
+            }
+        },
+        {
+            'name': 'Full Optimization (All Features)',
+            'params': {
+                'use_cuda': True,
+                'batch_size': 1024,
+                'num_epochs': 5,
+                'sequence_length': 64,
+                'forecast_length': 16,
+                'num_workers': 12,
+                'pin_memory': True,
+                'persistent_workers': True,
+                'prefetch_factor': 3,
+                'compile_model': True,  # Enable torch.compile
+                'verbose': True
             }
         }
     ]
