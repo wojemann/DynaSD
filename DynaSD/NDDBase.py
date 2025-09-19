@@ -17,7 +17,9 @@ class NDDBase(DynaSDBase):
     
     def __init__(self, fs=256, w_size=1, w_stride=0.5, use_cuda=False, **kwargs):
         # Extract training-specific parameters before passing to parent
-        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose']
+        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
+                          'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
+                          'use_amp', 'grad_accumulation_steps']
         training_kwargs = {}
         
         for param in training_params:
@@ -41,6 +43,18 @@ class NDDBase(DynaSDBase):
         self.patience = training_kwargs.get('patience', 5)
         self.tolerance = training_kwargs.get('tolerance', 1e-4)
         self.verbose = training_kwargs.get('verbose', True)
+        
+        # Performance optimization parameters
+        self.num_workers = training_kwargs.get('num_workers', min(16, torch.get_num_threads()))
+        self.pin_memory = training_kwargs.get('pin_memory', use_cuda and torch.cuda.is_available())
+        self.persistent_workers = training_kwargs.get('persistent_workers', True)
+        self.prefetch_factor = training_kwargs.get('prefetch_factor', 4)
+        self.use_amp = training_kwargs.get('use_amp', use_cuda and torch.cuda.is_available())
+        self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
+        
+        # Mixed precision scaler for A40 GPU optimization
+        if self.use_amp:
+            self.scaler = torch.cuda.amp.GradScaler()
         
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
@@ -100,15 +114,31 @@ class NDDBase(DynaSDBase):
             val_inputs = None
             val_targets = None
         
-        # Create datasets and dataloaders
+        # Create datasets and dataloaders with performance optimizations
         train_dataset = TensorDataset(train_inputs, train_targets)
         train_batch_size = len(train_dataset) if batch_size == 'full' else batch_size
-        train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+        train_dataloader = DataLoader(
+            train_dataset, 
+            batch_size=train_batch_size, 
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers and self.num_workers > 0,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
+        )
         
         if early_stopping:
             val_dataset = TensorDataset(val_inputs, val_targets)
             val_batch_size = len(val_dataset) if batch_size == 'full' else batch_size
-            val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False)
+            val_dataloader = DataLoader(
+                val_dataset, 
+                batch_size=val_batch_size, 
+                shuffle=False,
+                num_workers=self.num_workers,
+                pin_memory=self.pin_memory,
+                persistent_workers=self.persistent_workers and self.num_workers > 0,
+                prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
+            )
         
         # Setup training
         mse_criterion = nn.MSELoss()
@@ -130,22 +160,39 @@ class NDDBase(DynaSDBase):
             model.train()
             epoch_losses = []
             
-            # Training phase
-            for inputs, targets in train_dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+            # Training phase with optimizations
+            for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 
-                optimizer.zero_grad()
+                # Mixed precision forward pass
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        predictions = model(inputs, forecast_length)
+                        mse_loss = mse_criterion(predictions, targets)
+                        mse_loss = mse_loss / self.grad_accumulation_steps
+                    
+                    # Scaled backward pass
+                    self.scaler.scale(mse_loss).backward()
+                    
+                    # Gradient accumulation
+                    if (batch_idx + 1) % self.grad_accumulation_steps == 0:
+                        self.scaler.step(optimizer)
+                        self.scaler.update()
+                        optimizer.zero_grad()
+                else:
+                    # Standard training
+                    predictions = model(inputs, forecast_length)
+                    mse_loss = mse_criterion(predictions, targets)
+                    mse_loss = mse_loss / self.grad_accumulation_steps
+                    mse_loss.backward()
+                    
+                    # Gradient accumulation
+                    if (batch_idx + 1) % self.grad_accumulation_steps == 0:
+                        optimizer.step()
+                        optimizer.zero_grad()
                 
-                # Forward pass
-                predictions = model(inputs, forecast_length)
-                
-                # MSE loss (averaged across channels for training)
-                mse_loss = mse_criterion(predictions, targets)
-                mse_loss.backward()
-                optimizer.step()
-                
-                epoch_losses.append(mse_loss.item())
+                epoch_losses.append(mse_loss.item() * self.grad_accumulation_steps)
             
             avg_train_loss = np.mean(epoch_losses)
             
@@ -156,11 +203,17 @@ class NDDBase(DynaSDBase):
                 
                 with torch.no_grad():
                     for inputs, targets in val_dataloader:
-                        inputs = inputs.to(self.device)
-                        targets = targets.to(self.device)
+                        inputs = inputs.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
                         
-                        predictions = model(inputs, forecast_length)
-                        mse_loss = mse_criterion(predictions, targets)
+                        # Use mixed precision for validation too
+                        if self.use_amp:
+                            with torch.cuda.amp.autocast():
+                                predictions = model(inputs, forecast_length)
+                                mse_loss = mse_criterion(predictions, targets)
+                        else:
+                            predictions = model(inputs, forecast_length)
+                            mse_loss = mse_criterion(predictions, targets)
                         val_losses.append(mse_loss.item())
                 
                 avg_val_loss = np.mean(val_losses)
@@ -311,10 +364,18 @@ class NDDBase(DynaSDBase):
         X_scaled = self._scaler_transform(X)
         input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
 
-        # Create dataset and dataloader
+        # Create dataset and dataloader with optimizations
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        dataloader = DataLoader(
+            dataset, 
+            batch_size=batch_size, 
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            persistent_workers=self.persistent_workers and self.num_workers > 0,
+            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
+        )
         
         # Run inference to get sequence-level predictions
         self.model.eval()
@@ -323,11 +384,15 @@ class NDDBase(DynaSDBase):
         with torch.no_grad():
             batch_start = 0
             for inputs, targets in dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 
-                # Get predictions
-                predictions = self.model(inputs, self.forecast_length)
+                # Get predictions with mixed precision
+                if self.use_amp:
+                    with torch.cuda.amp.autocast():
+                        predictions = self.model(inputs, self.forecast_length)
+                else:
+                    predictions = self.model(inputs, self.forecast_length)
                 
                 # Calculate per-channel losses for each sequence in batch
                 batch_size_actual, seq_len, n_channels = predictions.shape
