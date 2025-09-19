@@ -17,7 +17,9 @@ class NDDBase(DynaSDBase):
     
     def __init__(self, fs=256, w_size=1, w_stride=0.5, use_cuda=False, **kwargs):
         # Extract training-specific parameters before passing to parent
-        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose']
+        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
+                          'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
+                          'grad_accumulation_steps']
         training_kwargs = {}
         
         for param in training_params:
@@ -42,6 +44,16 @@ class NDDBase(DynaSDBase):
         self.tolerance = training_kwargs.get('tolerance', 1e-4)
         self.verbose = training_kwargs.get('verbose', True)
         
+        # Performance optimization parameters for smaller models
+        # Scale workers based on available cores - more workers for data loading efficiency
+        default_workers = min(12, torch.get_num_threads()) if torch.get_num_threads() >= 8 else 4
+        self.num_workers = training_kwargs.get('num_workers', default_workers)
+        self.pin_memory = training_kwargs.get('pin_memory', use_cuda and torch.cuda.is_available())
+        self.persistent_workers = training_kwargs.get('persistent_workers', True)
+        self.prefetch_factor = training_kwargs.get('prefetch_factor', 3)  # Reduce for memory efficiency
+        self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
+    
+
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
         """
@@ -63,6 +75,10 @@ class NDDBase(DynaSDBase):
             print(f"Training {model.__class__.__name__} model:")
             print(f"  Sequence length: {sequence_length}, Forecast length: {forecast_length}")
             print(f"  Early stopping: {early_stopping}")
+            print(f"  Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+            print(f"  DataLoader workers: {self.num_workers}")
+        
+
         
         input_size = X.shape[1]
         
@@ -100,19 +116,54 @@ class NDDBase(DynaSDBase):
             val_inputs = None
             val_targets = None
         
-        # Create datasets and dataloaders
+        # Create datasets and dataloaders with performance optimizations
         train_dataset = TensorDataset(train_inputs, train_targets)
         train_batch_size = len(train_dataset) if batch_size == 'full' else batch_size
-        train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True)
+        # Configure DataLoader with proper multiprocessing settings
+        train_dataloader_kwargs = {
+            'batch_size': train_batch_size,
+            'shuffle': True,
+            'num_workers': self.num_workers,
+            'pin_memory': self.pin_memory
+        }
+        
+        # Only add multiprocessing-specific parameters when using workers
+        if self.num_workers > 0:
+            train_dataloader_kwargs.update({
+                'persistent_workers': self.persistent_workers,
+                'prefetch_factor': self.prefetch_factor
+            })
+        
+        train_dataloader = DataLoader(train_dataset, **train_dataloader_kwargs)
         
         if early_stopping:
             val_dataset = TensorDataset(val_inputs, val_targets)
             val_batch_size = len(val_dataset) if batch_size == 'full' else batch_size
-            val_dataloader = DataLoader(val_dataset, batch_size=val_batch_size, shuffle=False)
+            # Configure validation DataLoader
+            val_dataloader_kwargs = {
+                'batch_size': val_batch_size,
+                'shuffle': False,
+                'num_workers': self.num_workers,
+                'pin_memory': self.pin_memory
+            }
+            
+            # Only add multiprocessing-specific parameters when using workers
+            if self.num_workers > 0:
+                val_dataloader_kwargs.update({
+                    'persistent_workers': self.persistent_workers,
+                    'prefetch_factor': self.prefetch_factor
+                })
+            
+            val_dataloader = DataLoader(val_dataset, **val_dataloader_kwargs)
         
-        # Setup training
+        # Setup training with optimizations for smaller models
         mse_criterion = nn.MSELoss()
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        # Use AdamW with weight decay for better generalization in smaller models
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        
+        # Enable optimized attention if available (PyTorch 2.0+)
+        if hasattr(torch.backends, 'opt_einsum') and torch.backends.opt_einsum.enabled:
+            torch.backends.opt_einsum.enabled = True
         
         # Early stopping variables
         best_val_loss = float('inf')
@@ -130,22 +181,31 @@ class NDDBase(DynaSDBase):
             model.train()
             epoch_losses = []
             
-            # Training phase
-            for inputs, targets in train_dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
-                
-                optimizer.zero_grad()
+            # Training phase with optimizations
+            for batch_idx, (inputs, targets) in enumerate(train_dataloader):
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 
                 # Forward pass
                 predictions = model(inputs, forecast_length)
-                
-                # MSE loss (averaged across channels for training)
                 mse_loss = mse_criterion(predictions, targets)
+                mse_loss = mse_loss / self.grad_accumulation_steps
                 mse_loss.backward()
-                optimizer.step()
                 
-                epoch_losses.append(mse_loss.item())
+                # Gradient accumulation
+                if (batch_idx + 1) % self.grad_accumulation_steps == 0:
+                    optimizer.step()
+                    optimizer.zero_grad()
+                
+                epoch_losses.append(mse_loss.item() * self.grad_accumulation_steps)
+                
+                # Memory management for long training runs
+                if batch_idx % 50 == 0:
+                    # Clear CUDA cache periodically
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    # Delete temporary variables to help garbage collection
+                    del predictions, mse_loss
             
             avg_train_loss = np.mean(epoch_losses)
             
@@ -156,8 +216,8 @@ class NDDBase(DynaSDBase):
                 
                 with torch.no_grad():
                     for inputs, targets in val_dataloader:
-                        inputs = inputs.to(self.device)
-                        targets = targets.to(self.device)
+                        inputs = inputs.to(self.device, non_blocking=True)
+                        targets = targets.to(self.device, non_blocking=True)
                         
                         predictions = model(inputs, forecast_length)
                         mse_loss = mse_criterion(predictions, targets)
@@ -311,10 +371,25 @@ class NDDBase(DynaSDBase):
         X_scaled = self._scaler_transform(X)
         input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
 
-        # Create dataset and dataloader
+        # Create dataset and dataloader with optimizations
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        # Configure inference DataLoader
+        dataloader_kwargs = {
+            'batch_size': batch_size,
+            'shuffle': False,
+            'num_workers': self.num_workers,
+            'pin_memory': self.pin_memory
+        }
+        
+        # Only add multiprocessing-specific parameters when using workers
+        if self.num_workers > 0:
+            dataloader_kwargs.update({
+                'persistent_workers': self.persistent_workers,
+                'prefetch_factor': self.prefetch_factor
+            })
+        
+        dataloader = DataLoader(dataset, **dataloader_kwargs)
         
         # Run inference to get sequence-level predictions
         self.model.eval()
@@ -323,8 +398,8 @@ class NDDBase(DynaSDBase):
         with torch.no_grad():
             batch_start = 0
             for inputs, targets in dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 
                 # Get predictions
                 predictions = self.model(inputs, self.forecast_length)
