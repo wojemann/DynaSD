@@ -52,9 +52,9 @@ class NDDBase(DynaSDBase):
         self.use_amp = training_kwargs.get('use_amp', use_cuda and torch.cuda.is_available())
         self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
         
-        # Mixed precision scaler for A40 GPU optimization
+        # Mixed precision scaler for A40 GPU optimization (separate from data scaler)
         if self.use_amp:
-            self.scaler = torch.cuda.amp.GradScaler()
+            self.grad_scaler = torch.cuda.amp.GradScaler()
         
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
@@ -117,28 +117,42 @@ class NDDBase(DynaSDBase):
         # Create datasets and dataloaders with performance optimizations
         train_dataset = TensorDataset(train_inputs, train_targets)
         train_batch_size = len(train_dataset) if batch_size == 'full' else batch_size
-        train_dataloader = DataLoader(
-            train_dataset, 
-            batch_size=train_batch_size, 
-            shuffle=True,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            persistent_workers=self.persistent_workers and self.num_workers > 0,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
-        )
+        # Configure DataLoader with proper multiprocessing settings
+        train_dataloader_kwargs = {
+            'batch_size': train_batch_size,
+            'shuffle': True,
+            'num_workers': self.num_workers,
+            'pin_memory': self.pin_memory
+        }
+        
+        # Only add multiprocessing-specific parameters when using workers
+        if self.num_workers > 0:
+            train_dataloader_kwargs.update({
+                'persistent_workers': self.persistent_workers,
+                'prefetch_factor': self.prefetch_factor
+            })
+        
+        train_dataloader = DataLoader(train_dataset, **train_dataloader_kwargs)
         
         if early_stopping:
             val_dataset = TensorDataset(val_inputs, val_targets)
             val_batch_size = len(val_dataset) if batch_size == 'full' else batch_size
-            val_dataloader = DataLoader(
-                val_dataset, 
-                batch_size=val_batch_size, 
-                shuffle=False,
-                num_workers=self.num_workers,
-                pin_memory=self.pin_memory,
-                persistent_workers=self.persistent_workers and self.num_workers > 0,
-                prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
-            )
+            # Configure validation DataLoader
+            val_dataloader_kwargs = {
+                'batch_size': val_batch_size,
+                'shuffle': False,
+                'num_workers': self.num_workers,
+                'pin_memory': self.pin_memory
+            }
+            
+            # Only add multiprocessing-specific parameters when using workers
+            if self.num_workers > 0:
+                val_dataloader_kwargs.update({
+                    'persistent_workers': self.persistent_workers,
+                    'prefetch_factor': self.prefetch_factor
+                })
+            
+            val_dataloader = DataLoader(val_dataset, **val_dataloader_kwargs)
         
         # Setup training
         mse_criterion = nn.MSELoss()
@@ -173,12 +187,12 @@ class NDDBase(DynaSDBase):
                         mse_loss = mse_loss / self.grad_accumulation_steps
                     
                     # Scaled backward pass
-                    self.scaler.scale(mse_loss).backward()
+                    self.grad_scaler.scale(mse_loss).backward()
                     
                     # Gradient accumulation
                     if (batch_idx + 1) % self.grad_accumulation_steps == 0:
-                        self.scaler.step(optimizer)
-                        self.scaler.update()
+                        self.grad_scaler.step(optimizer)
+                        self.grad_scaler.update()
                         optimizer.zero_grad()
                 else:
                     # Standard training
@@ -367,15 +381,22 @@ class NDDBase(DynaSDBase):
         # Create dataset and dataloader with optimizations
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-        dataloader = DataLoader(
-            dataset, 
-            batch_size=batch_size, 
-            shuffle=False,
-            num_workers=self.num_workers,
-            pin_memory=self.pin_memory,
-            persistent_workers=self.persistent_workers and self.num_workers > 0,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2
-        )
+        # Configure inference DataLoader
+        dataloader_kwargs = {
+            'batch_size': batch_size,
+            'shuffle': False,
+            'num_workers': self.num_workers,
+            'pin_memory': self.pin_memory
+        }
+        
+        # Only add multiprocessing-specific parameters when using workers
+        if self.num_workers > 0:
+            dataloader_kwargs.update({
+                'persistent_workers': self.persistent_workers,
+                'prefetch_factor': self.prefetch_factor
+            })
+        
+        dataloader = DataLoader(dataset, **dataloader_kwargs)
         
         # Run inference to get sequence-level predictions
         self.model.eval()
