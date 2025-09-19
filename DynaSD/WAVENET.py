@@ -153,7 +153,7 @@ class WVNT(DynaSDBase):
         # Apply normalization and prepare data for WaveNet
         x_normalized = pd.DataFrame(self.scaler.transform(x), columns=chs)
         x_prepared = self._prepare_wavenet_segment(x_normalized)
-        if ~self.verbose:
+        if not self.verbose:
             verbocity = 0
         else:
             verbocity = 1

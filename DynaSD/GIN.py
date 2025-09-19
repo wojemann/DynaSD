@@ -122,7 +122,7 @@ class GIN(NDDBase):
                  w_size=1, 
                  w_stride=0.5,
                  num_epochs=10,
-                 batch_size='full',
+                 batch_size=1024,
                  lr=0.01,
                  residual_init=0.5,     # Initial value for residual connection weight
                  use_cuda=False,
