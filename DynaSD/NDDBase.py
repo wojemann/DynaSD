@@ -19,7 +19,7 @@ class NDDBase(DynaSDBase):
         # Extract training-specific parameters before passing to parent
         training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
                           'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
-                          'grad_accumulation_steps']
+                          'grad_accumulation_steps','compile_model']
         training_kwargs = {}
         
         for param in training_params:
