@@ -109,7 +109,8 @@ class WVNT(DynaSDBase):
             print(f"Successfully loaded WaveNet model from {self.model_path}")
 
         except Exception as e:
-            raise ValueError(f"Error loading WaveNet model: {e}")
+            print(f"Error loading WaveNet model: {e}")
+            # raise ValueError(f"Error loading WaveNet model: {e}")
     
     def __str__(self) -> str:
         return "WVNT"
