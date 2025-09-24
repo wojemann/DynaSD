@@ -264,7 +264,8 @@ class NDDBase(DynaSDBase):
             dist_params[ch]['m'] = m
             dist_params[ch]['R'] = R
             dist_params[ch]['n'] = f.shape[0]
-
+            dist_params[ch]['mse_m'] = np.mean(mse_x,axis=0)
+            dist_params[ch]['mse_std'] = np.std(mse_x,axis=0)
         self.dist_params = dist_params
  
         if self.verbose:
@@ -440,6 +441,7 @@ class NDDBase(DynaSDBase):
         assert self.is_fitted, "Must fit model before running inference"
         mse_df, corr_df = self._get_features(X)
         ndd = pd.DataFrame()
+        mse_z = pd.DataFrame()
         for ch in X.columns:
             mse_y = mse_df[ch].to_numpy().reshape(-1,1)
             corr_y = corr_df[ch].to_numpy().reshape(-1,1)
@@ -448,12 +450,14 @@ class NDDBase(DynaSDBase):
             R = self.dist_params[ch]['R']
             ri = np.linalg.solve(R.T, (f - m).T)
             ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
+            mse_z[ch] = (mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']
         
         # Store window times using new windowing
         self.time_wins = self.window_start_times
         
         # Store for backward compatibility
         self.mse_df = mse_df
+        self.mse_z_df = mse_z
         self.corr_df = corr_df
         self.ndd_df = ndd
 
