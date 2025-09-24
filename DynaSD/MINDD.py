@@ -216,37 +216,37 @@ class MINDD(NDDBase):
 
     #     return mse_df, corr_df
     
-    def forward(self, X):
-        """
-        Run inference and return features aggregated into windows.
-        1. Create sequences from continuous data and get per-channel losses
-        2. Aggregate sequence-level losses into w_size/w_stride windows
+    # def forward(self, X):
+    #     """
+    #     Run inference and return features aggregated into windows.
+    #     1. Create sequences from continuous data and get per-channel losses
+    #     2. Aggregate sequence-level losses into w_size/w_stride windows
         
-        Returns:
-            ndd_df: DataFrame with NDD values, columns = channel names
-        """
-        assert self.is_fitted, "Must fit model before running inference"
-        mse_df, corr_df = self._get_features(X)
-        ndd = pd.DataFrame()
-        for ch in X.columns:
-            mse_y = mse_df[ch].to_numpy().reshape(-1,1)
-            corr_y = corr_df[ch].to_numpy().reshape(-1,1)
-            f = np.concatenate((mse_y,corr_y),axis=1)
-            m = self.dist_params[ch]['m']
-            R = self.dist_params[ch]['R']
-            ri = np.linalg.solve(R.T, (f - m).T)
-            ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
+    #     Returns:
+    #         ndd_df: DataFrame with NDD values, columns = channel names
+    #     """
+    #     assert self.is_fitted, "Must fit model before running inference"
+    #     mse_df, corr_df = self._get_features(X)
+    #     ndd = pd.DataFrame()
+    #     for ch in X.columns:
+    #         mse_y = mse_df[ch].to_numpy().reshape(-1,1)
+    #         corr_y = corr_df[ch].to_numpy().reshape(-1,1)
+    #         f = np.concatenate((mse_y,corr_y),axis=1)
+    #         m = self.dist_params[ch]['m']
+    #         R = self.dist_params[ch]['R']
+    #         ri = np.linalg.solve(R.T, (f - m).T)
+    #         ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
         
-        # Store window times for compatibility with other models
-        nwins = num_wins(len(X), self.fs, self.w_size, self.w_stride)
-        self.time_wins = np.array([win_idx * self.w_stride for win_idx in range(nwins)])
+    #     # Store window times for compatibility with other models
+    #     nwins = num_wins(len(X), self.fs, self.w_size, self.w_stride)
+    #     self.time_wins = np.array([win_idx * self.w_stride for win_idx in range(nwins)])
         
-        # Store for backward compatibility
-        self.mse_df = mse_df
-        self.corr_df = corr_df
-        self.ndd_df = ndd
+    #     # Store for backward compatibility
+    #     self.mse_df = mse_df
+    #     self.corr_df = corr_df
+    #     self.ndd_df = ndd
 
-        return self.ndd_df
+    #     return self.ndd_df
     
     def predict(self, X):
         """Use the shared multi-step prediction from NDDBase"""

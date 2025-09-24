@@ -450,7 +450,8 @@ class NDDBase(DynaSDBase):
             R = self.dist_params[ch]['R']
             ri = np.linalg.solve(R.T, (f - m).T)
             ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
-            mse_z[ch] = (mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']
+
+            mse_z[ch] = np.array((mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']).reshape(-1,)
         
         # Store window times using new windowing
         self.time_wins = self.window_start_times
