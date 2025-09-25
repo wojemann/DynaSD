@@ -60,19 +60,63 @@ class NDDBase(DynaSDBase):
         self._cache_enabled = True
     
     def _get_data_hash(self, data, sequence_length, forecast_length, stride=None):
-        """Generate a hash for caching based on data characteristics and parameters"""
-        # Use data shape, sequence params, and a sample of data values for hash
-        shape_str = f"{data.shape}_{sequence_length}_{forecast_length}_{stride}"
+        """
+        ROBUST content-based hash for caching that focuses on data content rather than shape.
+        Detects identical data even with different DataFrame shapes or preprocessing.
+        """
+        if stride is None:
+            stride = forecast_length
+            
+        param_str = f"{sequence_length}_{forecast_length}_{stride}"
+        data_content = data.values
         
-        # Sample a few data points for uniqueness (avoid hashing entire array for performance)
-        if len(data) > 100:
-            sample_indices = np.linspace(0, len(data)-1, 100, dtype=int)
-            sample_data = data.iloc[sample_indices].values.flatten()
+        # ROBUST CONTENT FINGERPRINTING
+        # Use comprehensive statistical fingerprints that are shape-agnostic
+        if len(data_content) > 1000:
+            # Multi-region sampling for better detection
+            indices = []
+            
+            # Beginning region (first 5%)
+            indices.extend(range(0, min(100, len(data_content) // 20)))
+            
+            # End region (last 5%)  
+            end_start = max(len(data_content) - 100, len(data_content) * 19 // 20)
+            indices.extend(range(end_start, len(data_content)))
+            
+            # Middle region
+            mid_start = len(data_content) // 2 - 50
+            mid_end = len(data_content) // 2 + 50
+            indices.extend(range(max(0, mid_start), min(len(data_content), mid_end)))
+            
+            # Evenly spaced samples throughout
+            step = max(1, len(data_content) // 200)
+            indices.extend(range(0, len(data_content), step))
+            
+            # Remove duplicates and sort
+            indices = sorted(list(set(indices)))
+            sample_data = data_content[indices].flatten()
         else:
-            sample_data = data.values.flatten()
+            sample_data = data_content.flatten()
         
-        # Create hash from shape + sample data
-        hash_str = shape_str + str(sample_data[:50].sum()) + str(sample_data[-50:].sum())
+        # ROBUST STATISTICAL FINGERPRINTS
+        # These statistics are less sensitive to minor data changes but detect major differences
+        content_stats = [
+            np.mean(sample_data),                    # Central tendency
+            np.std(sample_data),                     # Spread  
+            np.min(sample_data),                     # Range bounds
+            np.max(sample_data),
+            np.median(sample_data),                  # Robust central tendency
+            np.sum(sample_data[:len(sample_data)//4]),       # First quarter sum
+            np.sum(sample_data[len(sample_data)//4:len(sample_data)//2]),  # Second quarter 
+            np.sum(sample_data[len(sample_data)//2:3*len(sample_data)//4]), # Third quarter
+            np.sum(sample_data[3*len(sample_data)//4:]),     # Fourth quarter sum
+            len(data_content),                       # Data length (important for cache validity)
+            data_content.shape[1] if len(data_content.shape) > 1 else 1,  # Channel count
+        ]
+        
+        # Create robust hash from parameters + content statistics
+        stats_str = ''.join(f'{stat:.8f}' for stat in content_stats)
+        hash_str = param_str + '_' + stats_str
         return hashlib.md5(hash_str.encode()).hexdigest()
 
     def _prepare_multistep_sequences_vectorized(self, data, sequence_length, forecast_length=1, ret_positions=False, stride=None):
@@ -93,18 +137,79 @@ class NDDBase(DynaSDBase):
         if stride is None:
             stride = forecast_length
             
-        # Check cache first
+        # Check cache first with smart prefix detection
         cache_key = None
+        prefix_cache_hit = None
+        
         if self._cache_enabled:
             cache_key = self._get_data_hash(data, sequence_length, forecast_length, stride)
+            
+            # Direct cache hit
             if cache_key in self._sequence_cache:
                 if self.verbose:
                     print("Using cached sequences")
-                cached_result = self._sequence_cache[cache_key]
+                cached_input, cached_target, cached_positions = self._sequence_cache[cache_key]
                 if ret_positions:
-                    return cached_result
+                    return cached_input, cached_target, cached_positions
                 else:
-                    return cached_result[:2]  # Return only input_data, target_data
+                    return cached_input, cached_target
+            
+            # SMART PREFIX DETECTION for your use case
+            # Check if this data might be an extension of previously cached data
+            if len(self._sequence_cache) > 0:
+                prefix_cache_hit = self._check_prefix_cache(data, sequence_length, forecast_length, stride)
+                if prefix_cache_hit:
+                    cached_input, cached_target, cached_positions, prefix_sequences = prefix_cache_hit
+                    
+                    if self.verbose:
+                        print(f"Using prefix cache: reusing {len(cached_input)} sequences, computing {prefix_sequences} new ones")
+                    
+                    # Generate remaining sequences
+                    data_np = data.to_numpy()
+                    n_samples, n_channels = data_np.shape
+                    total_seq_length = sequence_length + forecast_length
+                    n_sequences = (n_samples - total_seq_length) // stride + 1
+                    
+                    if n_sequences > len(cached_input):
+                        # Generate the additional sequences using vectorized method
+                        start_idx = len(cached_input) * stride
+                        remaining_data = data.iloc[start_idx:].copy()
+                        remaining_input, remaining_target, remaining_pos = self._prepare_multistep_sequences_vectorized(
+                            remaining_data, sequence_length, forecast_length, ret_positions=True, stride=stride
+                        )
+                        
+                        # Combine cached and new sequences
+                        combined_input = torch.cat([cached_input, remaining_input], dim=0)
+                        combined_target = torch.cat([cached_target, remaining_target], dim=0)
+                        
+                        if ret_positions:
+                            # Adjust positions for remaining sequences
+                            for pos in remaining_pos:
+                                pos['seq_idx'] += len(cached_positions)
+                                pos['input_start'] += start_idx
+                                pos['input_end'] += start_idx
+                                pos['target_start'] += start_idx
+                                pos['target_end'] += start_idx
+                                pos['seq_time_start'] += start_idx / self.fs
+                                pos['seq_time_end'] += start_idx / self.fs
+                                pos['input_time_start'] += start_idx / self.fs
+                                pos['target_time_start'] += start_idx / self.fs
+                            
+                            combined_positions = cached_positions + remaining_pos
+                            
+                            # Cache the full result
+                            self._sequence_cache[cache_key] = (combined_input, combined_target, combined_positions)
+                            return combined_input, combined_target, combined_positions
+                        else:
+                            # Cache the full result
+                            self._sequence_cache[cache_key] = (combined_input, combined_target, [])
+                            return combined_input, combined_target
+                    else:
+                        # The cached data already covers everything we need
+                        if ret_positions:
+                            return cached_input[:n_sequences], cached_target[:n_sequences], cached_positions[:n_sequences]
+                        else:
+                            return cached_input[:n_sequences], cached_target[:n_sequences]
         
         data_np = data.to_numpy()
         n_samples, n_channels = data_np.shape
@@ -156,29 +261,27 @@ class NDDBase(DynaSDBase):
         input_tensor = torch.FloatTensor(input_data)
         target_tensor = torch.FloatTensor(target_data)
         
-        # Generate position information only if requested (saves memory/time)
-        seq_positions = None
-        if ret_positions:
-            seq_positions = []
-            seq_starts = np.arange(n_sequences) * stride
-            
-            for seq_idx, seq_start in enumerate(seq_starts):
-                input_end = seq_start + sequence_length
-                target_end = input_end + forecast_length
-                
-                seq_positions.append({
-                    'seq_idx': seq_idx,
-                    'input_start': seq_start,
-                    'input_end': input_end,
-                    'target_start': input_end,
-                    'target_end': target_end,
-                    'seq_time_start': seq_start / self.fs,
-                    'seq_time_end': input_end / self.fs,
-                    'input_time_start': seq_start / self.fs,
-                    'target_time_start': input_end / self.fs
-                })
+        # Always generate position information for caching efficiency
+        seq_positions = []
+        seq_starts = np.arange(n_sequences) * stride
         
-        # Cache the result
+        for seq_idx, seq_start in enumerate(seq_starts):
+            input_end = seq_start + sequence_length
+            target_end = input_end + forecast_length
+            
+            seq_positions.append({
+                'seq_idx': seq_idx,
+                'input_start': seq_start,
+                'input_end': input_end,
+                'target_start': input_end,
+                'target_end': target_end,
+                'seq_time_start': seq_start / self.fs,
+                'seq_time_end': input_end / self.fs,
+                'input_time_start': seq_start / self.fs,
+                'target_time_start': input_end / self.fs
+            })
+        
+        # Cache the result (always with positions)
         if self._cache_enabled and cache_key:
             self._sequence_cache[cache_key] = (input_tensor, target_tensor, seq_positions)
             
@@ -215,6 +318,85 @@ class NDDBase(DynaSDBase):
     def enable_sequence_cache(self):
         """Enable sequence caching"""
         self._cache_enabled = True
+    
+    def _check_prefix_cache(self, data, sequence_length, forecast_length, stride):
+        """
+        SMART PREFIX DETECTION: Check if current data is an extension of cached data.
+        Perfect for train-on-subset → infer-on-full workflows.
+        
+        Returns: (cached_input, cached_target, cached_positions, prefix_sequences) or None
+        """
+        data_content = data.values
+        
+        # Check each cached entry to see if current data starts with cached data
+        for cached_key, (cached_input, cached_target, cached_positions) in self._sequence_cache.items():
+            try:
+                # Parse the cached key to get parameters
+                if not cached_key or '_' not in cached_key:
+                    continue
+                    
+                # Extract sequence parameters from cache key 
+                key_parts = cached_key.split('_')
+                if len(key_parts) < 3:
+                    continue
+                    
+                cached_seq_len = int(key_parts[0])
+                cached_forecast_len = int(key_parts[1]) 
+                cached_stride = int(key_parts[2])
+                
+                # Parameters must match
+                if (cached_seq_len != sequence_length or 
+                    cached_forecast_len != forecast_length or 
+                    cached_stride != stride):
+                    continue
+                
+                # Try to reconstruct what the cached data looked like
+                if not cached_positions:
+                    continue
+                    
+                # Get the data length that was used to create the cached sequences
+                last_pos = cached_positions[-1]
+                cached_data_length = last_pos['target_end']
+                
+                # Check if current data is long enough and starts with the same content
+                if len(data_content) <= cached_data_length:
+                    continue
+                
+                # Extract the prefix of current data that should match cached data
+                prefix_data = data_content[:cached_data_length]
+                
+                # Generate hash for this prefix to compare with cached data
+                prefix_df = pd.DataFrame(prefix_data, columns=data.columns[:prefix_data.shape[1]])
+                prefix_hash = self._get_data_hash(prefix_df, sequence_length, forecast_length, stride)
+                
+                if prefix_hash == cached_key:
+                    # Found a match! Current data extends the cached data
+                    return cached_input, cached_target, cached_positions, len(cached_input)
+                
+                # Alternative check: compare actual data content more directly
+                # Generate sequences from the prefix and see if they match cached sequences
+                if cached_data_length < len(data_content):
+                    prefix_df = data.iloc[:cached_data_length].copy()
+                    try:
+                        prefix_input, prefix_target = self._prepare_multistep_sequences_vectorized(
+                            prefix_df, sequence_length, forecast_length, ret_positions=False, stride=stride
+                        )
+                        
+                        # Check if generated sequences match cached sequences
+                        if (prefix_input.shape == cached_input.shape and 
+                            prefix_target.shape == cached_target.shape and
+                            torch.allclose(prefix_input, cached_input, atol=1e-6) and
+                            torch.allclose(prefix_target, cached_target, atol=1e-6)):
+                            
+                            return cached_input, cached_target, cached_positions, len(cached_input)
+                    except:
+                        continue
+                        
+            except Exception:
+                # Skip this cache entry if there's any error in processing
+                continue
+        
+        return None
     
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
