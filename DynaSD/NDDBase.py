@@ -393,7 +393,8 @@ class NDDBase(DynaSDBase):
         dataloader = DataLoader(dataset, **dataloader_kwargs)
         
         # Run inference to get sequence-level predictions
-        self.model.eval()
+        if hasattr(self.model, 'eval'):
+            self.model.eval()
         seq_results = []
         
         with torch.no_grad():
@@ -543,7 +544,8 @@ class NDDBase(DynaSDBase):
         input_data, _, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
         
         # Run inference to get all predictions
-        self.model.eval()
+        if hasattr(self.model, 'eval'):
+            self.model.eval()
         all_predictions = []
         
         with torch.no_grad():
@@ -618,7 +620,8 @@ class NDDBase(DynaSDBase):
         input_data, target_data, win_times = self._prepare_segment(X_scaled, ret_time=True)
         
         # Run inference
-        self.model.eval()
+        if hasattr(self.model, 'eval'):
+            self.model.eval()
         all_predictions = []
         
         with torch.no_grad():
