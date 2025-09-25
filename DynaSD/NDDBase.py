@@ -8,6 +8,8 @@ import pandas as pd
 import warnings
 from tqdm import tqdm
 from .utils import num_wins, MovingWinClips
+import hashlib
+from numpy.lib.stride_tricks import sliding_window_view
 
 class NDDBase(DynaSDBase):
     """
@@ -52,8 +54,168 @@ class NDDBase(DynaSDBase):
         self.persistent_workers = training_kwargs.get('persistent_workers', True)
         self.prefetch_factor = training_kwargs.get('prefetch_factor', 3)  # Reduce for memory efficiency
         self.grad_accumulation_steps = training_kwargs.get('grad_accumulation_steps', 1)
+        
+        # Sequence caching for performance
+        self._sequence_cache = {}
+        self._cache_enabled = True
     
+    def _get_data_hash(self, data, sequence_length, forecast_length, stride=None):
+        """Generate a hash for caching based on data characteristics and parameters"""
+        # Use data shape, sequence params, and a sample of data values for hash
+        shape_str = f"{data.shape}_{sequence_length}_{forecast_length}_{stride}"
+        
+        # Sample a few data points for uniqueness (avoid hashing entire array for performance)
+        if len(data) > 100:
+            sample_indices = np.linspace(0, len(data)-1, 100, dtype=int)
+            sample_data = data.iloc[sample_indices].values.flatten()
+        else:
+            sample_data = data.values.flatten()
+        
+        # Create hash from shape + sample data
+        hash_str = shape_str + str(sample_data[:50].sum()) + str(sample_data[-50:].sum())
+        return hashlib.md5(hash_str.encode()).hexdigest()
 
+    def _prepare_multistep_sequences_vectorized(self, data, sequence_length, forecast_length=1, ret_positions=False, stride=None):
+        """
+        OPTIMIZED: Prepare sequences using vectorized operations with caching.
+        Uses numpy's sliding_window_view for efficiency similar to scipy's hankel function.
+        
+        Args:
+            data: Input DataFrame
+            sequence_length: Length of input sequences
+            forecast_length: Length of forecast sequences  
+            ret_positions: Whether to return position information
+            stride: Stride for sequence creation (default: forecast_length)
+            
+        Returns:
+            tuple: (input_data, target_data, [seq_positions])
+        """
+        if stride is None:
+            stride = forecast_length
+            
+        # Check cache first
+        cache_key = None
+        if self._cache_enabled:
+            cache_key = self._get_data_hash(data, sequence_length, forecast_length, stride)
+            if cache_key in self._sequence_cache:
+                if self.verbose:
+                    print("Using cached sequences")
+                cached_result = self._sequence_cache[cache_key]
+                if ret_positions:
+                    return cached_result
+                else:
+                    return cached_result[:2]  # Return only input_data, target_data
+        
+        data_np = data.to_numpy()
+        n_samples, n_channels = data_np.shape
+        total_seq_length = sequence_length + forecast_length
+        
+        # Calculate number of sequences
+        n_sequences = (n_samples - total_seq_length) // stride + 1
+        
+        if n_sequences <= 0:
+            raise ValueError(f"Not enough data for even one sequence. Need at least {total_seq_length} samples.")
+            
+        if self.verbose:
+            print(f"Creating {n_sequences} sequences using vectorized operations (stride={stride})")
+        
+        # VECTORIZED APPROACH: Use sliding_window_view for efficiency
+        # Create sliding windows for the total sequence length
+        try:
+            # Create windows of size total_seq_length
+            windows = sliding_window_view(data_np, window_shape=(total_seq_length, n_channels), axis=(0, 1))
+            
+            # Extract sequences at the specified stride
+            sequence_indices = np.arange(0, n_sequences) * stride
+            selected_windows = windows[sequence_indices, 0]  # Shape: (n_sequences, total_seq_length, n_channels)
+            
+            # Split into input and target sequences
+            input_data = selected_windows[:, :sequence_length, :]  # (n_sequences, sequence_length, n_channels)
+            target_data = selected_windows[:, sequence_length:, :]  # (n_sequences, forecast_length, n_channels)
+            
+        except Exception:
+            # Fallback to manual method if sliding_window_view fails
+            if self.verbose:
+                print("Falling back to pre-allocated array method")
+            
+            # Pre-allocate arrays (much faster than list appending)
+            input_data = np.empty((n_sequences, sequence_length, n_channels), dtype=data_np.dtype)
+            target_data = np.empty((n_sequences, forecast_length, n_channels), dtype=data_np.dtype)
+            
+            # Vectorized index generation
+            seq_starts = np.arange(n_sequences) * stride
+            
+            for i, seq_start in enumerate(seq_starts):
+                input_end = seq_start + sequence_length
+                target_end = input_end + forecast_length
+                
+                input_data[i] = data_np[seq_start:input_end]
+                target_data[i] = data_np[input_end:target_end]
+        
+        # Convert to torch tensors
+        input_tensor = torch.FloatTensor(input_data)
+        target_tensor = torch.FloatTensor(target_data)
+        
+        # Generate position information only if requested (saves memory/time)
+        seq_positions = None
+        if ret_positions:
+            seq_positions = []
+            seq_starts = np.arange(n_sequences) * stride
+            
+            for seq_idx, seq_start in enumerate(seq_starts):
+                input_end = seq_start + sequence_length
+                target_end = input_end + forecast_length
+                
+                seq_positions.append({
+                    'seq_idx': seq_idx,
+                    'input_start': seq_start,
+                    'input_end': input_end,
+                    'target_start': input_end,
+                    'target_end': target_end,
+                    'seq_time_start': seq_start / self.fs,
+                    'seq_time_end': input_end / self.fs,
+                    'input_time_start': seq_start / self.fs,
+                    'target_time_start': input_end / self.fs
+                })
+        
+        # Cache the result
+        if self._cache_enabled and cache_key:
+            self._sequence_cache[cache_key] = (input_tensor, target_tensor, seq_positions)
+            
+            # Limit cache size to prevent memory issues
+            if len(self._sequence_cache) > 10:
+                # Remove oldest cache entry
+                oldest_key = next(iter(self._sequence_cache))
+                del self._sequence_cache[oldest_key]
+        
+        if ret_positions:
+            return input_tensor, target_tensor, seq_positions
+        else:
+            return input_tensor, target_tensor
+
+    def _prepare_multistep_sequences(self, data, sequence_length, forecast_length=1, ret_positions=False):
+        """
+        Wrapper for backward compatibility - routes to optimized version
+        """
+        return self._prepare_multistep_sequences_vectorized(
+            data, sequence_length, forecast_length, ret_positions
+        )
+    
+    def clear_sequence_cache(self):
+        """Clear the sequence cache to free memory"""
+        self._sequence_cache.clear()
+        if self.verbose:
+            print("Sequence cache cleared")
+    
+    def disable_sequence_cache(self):
+        """Disable sequence caching"""
+        self._cache_enabled = False
+        self.clear_sequence_cache()
+        
+    def enable_sequence_cache(self):
+        """Enable sequence caching"""
+        self._cache_enabled = True
+    
     def _train_model_multistep(self, X, model, sequence_length, forecast_length, num_epochs, batch_size, lr, 
                               early_stopping=False, val_split=0.2, patience=5, tolerance=1e-4):
         """
@@ -465,70 +627,6 @@ class NDDBase(DynaSDBase):
 
         return self.ndd_df
 
-    def _prepare_multistep_sequences(self, data, sequence_length, forecast_length = 1,ret_positions=False):
-        """
-        Prepare sequences from continuous data for multi-step forecasting.
-        Used by GIN, LiNDDA, MINDA.
-        
-        Args:
-            data: Input DataFrame
-            sequence_length: Length of input/forecast sequences
-            ret_positions: Whether to return position information
-            
-        Returns:
-            tuple: (input_data, target_data, [seq_positions])
-        """
-        data_np = data.to_numpy()
-        n_samples, _ = data_np.shape
-        
-        # Create non-overlapping sequences with stride = sequence_length
-        stride = forecast_length
-
-        total_seq_length = sequence_length + forecast_length  # input + target
-        
-        # Calculate how many sequences we can create
-        n_sequences = (n_samples - total_seq_length) // stride + 1
-        
-        if n_sequences <= 0:
-            raise ValueError(f"Not enough data for even one sequence. Need at least {total_seq_length} samples.")
-        if self.verbose:
-            print(f"Creating {n_sequences} non-overlapping sequences from continuous data")
-        
-        all_inputs = []
-        all_targets = []
-        seq_positions = []  # Track where each sequence starts in original data
-        
-        for seq_idx in range(n_sequences):
-            seq_start = seq_idx * stride
-            input_end = seq_start + sequence_length
-            target_end = input_end + forecast_length
-            
-            # Extract input and target sequences
-            input_seq = data_np[seq_start:input_end, :]
-            target_seq = data_np[input_end:target_end, :]
-            
-            all_inputs.append(input_seq)
-            all_targets.append(target_seq)
-            seq_positions.append({
-                'seq_idx': seq_idx,
-                'input_start': seq_start,
-                'input_end': input_end,
-                'target_start': input_end,
-                'target_end': target_end,
-                'seq_time_start': seq_start / self.fs,
-                'seq_time_end': input_end / self.fs,
-                'input_time_start': seq_start / self.fs,
-                'target_time_start': input_end / self.fs
-            })
-        
-        input_data = torch.FloatTensor(np.array(all_inputs))
-        target_data = torch.FloatTensor(np.array(all_targets))
-        
-        if ret_positions:
-            return input_data, target_data, seq_positions
-        else:
-            return input_data, target_data
-    
     def predict_multistep(self, X):
         """
         Generate forecasted time series by concatenating multi-step sequence predictions.
