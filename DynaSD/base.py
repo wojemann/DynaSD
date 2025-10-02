@@ -103,7 +103,7 @@ class DynaSDBase:
         
         for i_ch in range(sz_prob.shape[1]):
             # Transform data to log space for better Gaussian fitting
-            X = sz_prob.iloc[:,i_ch].to_numpy()
+            X = sz_prob.iloc[:,i_ch].fillna(method='ffill').to_numpy()
             X_f = np.log(X.reshape(-1,1)+1e-10)
             X_f = X_f[X_f < np.percentile(X_f,99.99)].reshape(-1,1)
             
