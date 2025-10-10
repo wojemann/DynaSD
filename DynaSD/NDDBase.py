@@ -751,7 +751,7 @@ class NDDBase(DynaSDBase):
                 predictions = self.model(inputs, self.forecast_length)
                 
                 # Calculate per-channel losses for each sequence in batch
-                batch_size_actual, seq_len, n_channels = predictions.shape
+                batch_size_actual, _, _ = predictions.shape
                 
                 for batch_idx in range(batch_size_actual):
                     seq_idx = batch_start + batch_idx

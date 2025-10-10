@@ -105,7 +105,7 @@ class WVNT(DynaSDBase):
             self.model_path = ospj('..','checkpoints', 'WaveNet', 'v111.hdf5')
        
         try:
-            self.mdl = load_model(self.model_path)
+            self.model = load_model(self.model_path)
             print(f"Successfully loaded WaveNet model from {self.model_path}")
 
         except Exception as e:
@@ -144,7 +144,7 @@ class WVNT(DynaSDBase):
         pd.DataFrame
             Seizure probabilities with windows as rows and channels as columns
         """
-        if self.mdl is None:
+        if self.model is None:
             raise ValueError("No valid WaveNet model available for prediction")
             
         # Store channel names and calculate dimensions

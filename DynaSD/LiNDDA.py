@@ -194,9 +194,9 @@ class LiNDDA(NDDBase):
                  use_cuda=False,
                  closeform=False,       # Use sklearn LinearRegression instead of torch
                  **kwargs):
-
+        if closeform:
+            use_cuda = False
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
-        
         # Store parameters - input_length == forecast_horizon for simplicity
         self.sequence_length = sequence_length
         self.forecast_length = forecast_length
