@@ -189,58 +189,64 @@ class NDD(NDDBase):
         X_scaled = self._scaler_transform(X)
         input_data, target_data, seq_positions = self._prepare_sequences(X_scaled, ret_positions=True)
         
-        # Create dataset and dataloader
+        # Create dataset and dataloader - NO workers for inference
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False,
+                               num_workers=0, pin_memory=False)
         
         # Run inference to get sequence-level predictions
         self.model.eval()
-        seq_results = []
         
+        # Collect all predictions and targets first
+        all_predictions = []
+        all_targets = []
         with torch.no_grad():
-            batch_start = 0
             for inputs, targets in dataloader:
-                inputs = inputs.to(self.device)
-                targets = targets.to(self.device)
-                
-                # Get predictions
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.to(self.device, non_blocking=True)
                 predictions = self.model(inputs, self.forecast_horizon)
-                
-                # Calculate per-channel losses for each sequence in batch
-                batch_size_actual, seq_len, n_channels = predictions.shape
-                
-                for batch_idx in range(batch_size_actual):
-                    seq_idx = batch_start + batch_idx
-                    seq_pos = seq_positions[seq_idx]
-                    
-                    # MSE per channel for this sequence
-                    mse = torch.mean((predictions[batch_idx] - targets[batch_idx]) ** 2, dim=0).cpu().numpy()
-                    
-                    # ZCR difference per channel for this sequence
-                    zcr_diffs = []
-                    for ch in range(n_channels):
-                        pred_zcr = zero_crossing_rate(predictions[batch_idx, :, ch].cpu().numpy())
-                        target_zcr = zero_crossing_rate(targets[batch_idx, :, ch].cpu().numpy())
-                        zcr_diffs.append((pred_zcr - target_zcr) ** 2)
-                    zcr_diffs = np.array(zcr_diffs) * 100
-                    
-                    # Combined loss per channel
-                    combined = mse + self.lambda_zcr * zcr_diffs
-                    
-                    # Store results with temporal position and sequences for correlation
-                    seq_results.append({
-                        'seq_idx': seq_idx,
-                        'target_start_time': seq_pos['target_time_start'],
-                        'target_end_time': seq_pos['target_time_start'] + self.forecast_horizon / self.fs,
-                        'mse': mse,
-                        'zcr': zcr_diffs,
-                        'combined': combined,
-                        'predicted_seq': predictions[batch_idx].cpu().numpy(),
-                        'target_seq': targets[batch_idx].cpu().numpy()
-                    })
-                
-                batch_start += batch_size_actual
+                all_predictions.append(predictions)
+                all_targets.append(targets)
+        
+        # Concatenate all batches
+        all_predictions = torch.cat(all_predictions, dim=0)  # (n_sequences, forecast_horizon, n_channels)
+        all_targets = torch.cat(all_targets, dim=0)
+        
+        # Compute MSE on GPU for all sequences at once
+        batch_mse = torch.mean((all_predictions - all_targets) ** 2, dim=1)  # (n_sequences, n_channels)
+        
+        # Single GPU→CPU transfer
+        all_predictions_np = all_predictions.cpu().numpy()
+        all_targets_np = all_targets.cpu().numpy()
+        batch_mse_np = batch_mse.cpu().numpy()
+        
+        # Compute ZCR on CPU (vectorized where possible)
+        n_sequences, seq_len, n_channels = all_predictions_np.shape
+        batch_zcr = np.zeros((n_sequences, n_channels))
+        
+        for seq_idx in range(n_sequences):
+            for ch in range(n_channels):
+                pred_zcr = zero_crossing_rate(all_predictions_np[seq_idx, :, ch])
+                target_zcr = zero_crossing_rate(all_targets_np[seq_idx, :, ch])
+                batch_zcr[seq_idx, ch] = ((pred_zcr - target_zcr) ** 2) * 100
+        
+        # Combined metric
+        batch_combined = batch_mse_np + self.lambda_zcr * batch_zcr
+        
+        # Build seq_results with pre-computed metrics
+        seq_results = []
+        for seq_idx, seq_pos in enumerate(seq_positions):
+            seq_results.append({
+                'seq_idx': seq_idx,
+                'target_start_time': seq_pos['target_time_start'],
+                'target_end_time': seq_pos['target_time_start'] + self.forecast_horizon / self.fs,
+                'mse': batch_mse_np[seq_idx],
+                'zcr': batch_zcr[seq_idx],
+                'combined': batch_combined[seq_idx],
+                'predicted_seq': all_predictions_np[seq_idx],
+                'target_seq': all_targets_np[seq_idx]
+            })
         
         # Now aggregate sequence results into windows
         mse_df, zcr_df, combined_df, corr_df = self._aggregate_sequences_to_windows(seq_results, X)

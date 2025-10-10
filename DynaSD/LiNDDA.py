@@ -236,21 +236,26 @@ class LiNDDA(NDDBase):
             self.model.fit(X_train, y_train)
             self.is_fitted = True
             
-            mse,corr = self._get_features(X)
+            mse, corr = self._get_features(X)
 
             dist_params = {ch:dict() for ch in X.columns}
             for ch in X.columns:
                 mse_x = mse[ch].to_numpy().reshape(-1,1)
-                corr_x = corr[ch].to_numpy().reshape(-1,1)
-                f = np.concatenate((mse_x,corr_x),axis=1)
-                m = np.mean(f,axis=0)
-                C = f - m
-                _, R = np.linalg.qr(C) 
-                dist_params[ch]['m'] = m
-                dist_params[ch]['R'] = R
-                dist_params[ch]['n'] = f.shape[0]
-                dist_params[ch]['mse_m'] = np.mean(mse_x,axis=0)
-                dist_params[ch]['mse_std'] = np.std(mse_x,axis=0)
+                
+                if corr is not None:
+                    # Full mode with correlation
+                    corr_x = corr[ch].to_numpy().reshape(-1,1)
+                    f = np.concatenate((mse_x, corr_x), axis=1)
+                    m = np.mean(f, axis=0)
+                    C = f - m
+                    _, R = np.linalg.qr(C) 
+                    dist_params[ch]['m'] = m
+                    dist_params[ch]['R'] = R
+                    dist_params[ch]['n'] = f.shape[0]
+                
+                # Always store MSE statistics for z-scoring
+                dist_params[ch]['mse_m'] = np.mean(mse_x, axis=0)
+                dist_params[ch]['mse_std'] = np.std(mse_x, axis=0)
             self.dist_params = dist_params
             
         else:
