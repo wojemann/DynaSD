@@ -172,10 +172,11 @@ class DynaSDBase:
             else:
                 return np.nanmean(boundaries[boundaries > 1.1748070328441302])
         elif method == 'automedian':
-            if np.sum(boundaries > 1.1725) == 0:
-                return 1.479305740987984
+            boundary = '0.544057'
+            if np.sum(boundaries > boundary) == 0:
+                return 0.903576
             else:
-                return np.nanmedian(boundaries[boundaries > 1.1748070328441302])
+                return np.nanmedian(boundaries[boundaries > boundary])
         elif method == 'meanover':
             return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
         elif method == 'medianover':
