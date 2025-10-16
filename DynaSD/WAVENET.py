@@ -111,6 +111,7 @@ class WVNT(DynaSDBase):
         except Exception as e:
             if self.verbose:
                 print(f"Error loading WaveNet model: {e}")
+            self.model = None
             # raise ValueError(f"Error loading WaveNet model: {e}")
     
     def __str__(self) -> str:
@@ -160,7 +161,7 @@ class WVNT(DynaSDBase):
         else:
             verbocity = 1
         # Generate predictions (get seizure probability from class 1)
-        y = self.mdl.predict(x_prepared,verbose=verbocity,batch_size=self.batch_size)[:, 1]
+        y = self.model.predict(x_prepared,verbose=verbocity,batch_size=self.batch_size)[:, 1]
         
         # Reshape to windows x channels format and convert to DataFrame
         probabilities = y.reshape(nwins, nch)
