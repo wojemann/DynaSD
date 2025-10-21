@@ -211,3 +211,6 @@ class WVNT(DynaSDBase):
             data_mat[:,:,k] = samples
         data_flat = data_mat.transpose(0,2,1).reshape(-1,win_len_idx)
         return data_flat
+    
+    def _get_pretrained_threshold(self):
+        return 0.489462

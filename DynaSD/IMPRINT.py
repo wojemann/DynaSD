@@ -344,3 +344,6 @@ class IMPRINT(DynaSDBase):
             return sz_idxs_df, sz_clf_ff
         else:
             return sz_idxs_df
+            
+    def _get_pretrained_threshold(self):
+        return 16.297232

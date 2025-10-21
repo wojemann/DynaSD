@@ -361,5 +361,32 @@ class LiNDDA(NDDBase):
         else:
             return self.predict_multistep(X)
 
+    def _get_pretrained_threshold(self):
+        return 0.940923
+
+    def _aggregate_threshold(self, boundaries, method):
+        """
+        Helper function to aggregate channel boundaries into final threshold.
+        """
+        boundary = 0.544057
+        if method == 'mean':
+            return np.nanmean(boundaries) + np.nanstd(boundaries)
+        elif method == 'automean':
+            if np.sum(boundaries > boundary) == 0:
+                return 0.940923
+            else:
+                return np.nanmean(boundaries[boundaries > boundary])
+        elif method == 'automedian':
+            if np.sum(boundaries > boundary) == 0:
+                return 0.940923
+            else:
+                return np.nanmedian(boundaries[boundaries > boundary])
+        elif method == 'meanover':
+            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
+        elif method == 'medianover':
+            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
+        else:
+            raise ValueError(f"Unknown aggregation method: {method}")
+
     def __str__(self):
         return "LiNDDA"

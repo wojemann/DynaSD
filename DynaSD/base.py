@@ -149,40 +149,10 @@ class DynaSDBase:
         return np.array(all_gbounds)
 
     def _aggregate_threshold(self, boundaries, method):
-        """
-        Helper function to aggregate channel boundaries into final threshold.
-        
-        Parameters:
-        -----------
-        boundaries : np.array
-            Array of boundary values (may contain NaN)
-        method : str
-            Aggregation method
-            
-        Returns:
-        --------
-        float
-            Final threshold value
-        """
-        if method == 'mean':
-            return np.nanmean(boundaries) + np.nanstd(boundaries)
-        elif method == 'automean':
-            if np.sum(boundaries > 1.194797045747334) == 0:
-                return 1.479305740987984
-            else:
-                return np.nanmean(boundaries[boundaries > 1.1748070328441302])
-        elif method == 'automedian':
-            boundary = 0.544057
-            if np.sum(boundaries > boundary) == 0:
-                return 0.903576
-            else:
-                return np.nanmedian(boundaries[boundaries > boundary])
-        elif method == 'meanover':
-            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
-        elif method == 'medianover':
-            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
-        else:
-            raise ValueError(f"Unknown aggregation method: {method}")
+        return None
+    
+    def _get_pretrained_threshold(self):
+        return None
 
     def get_threshold(self, sz_prob, method='automedian', verbose=False, seed=100):
         """
@@ -194,7 +164,7 @@ class DynaSDBase:
             Seizure probability matrix with channels as columns
         method : str, default='automedian'
             Threshold calculation method:
-            - 'cval': Constant value (1.479305740987984)
+            - 'pretrained': Constant value trained on a large seizure onset annotated dataset
             - 'automedian': Gaussian mixture boundaries with auto median aggregation
             - 'automean': Gaussian mixture boundaries with auto mean aggregation  
             - 'mean': Gaussian mixture boundaries with mean + std aggregation
@@ -212,8 +182,8 @@ class DynaSDBase:
         """
         
         # For constant value method, return fixed threshold immediately
-        if method == 'cval':
-            self.threshold = 1.479305740987984
+        if method == 'pretrained':
+            self.threshold = self._get_pretrained_threshold()
             return self.threshold
             
         # For Gaussian-based methods, compute boundaries and aggregate
@@ -228,7 +198,7 @@ class DynaSDBase:
             return threshold
             
         else:
-            raise ValueError(f"Unknown method '{method}'. Choose from: 'cval', 'automedian', 'automean', 'mean', 'meanover', 'medianover'")
+            raise ValueError(f"Unknown method '{method}'. Choose from: 'pretrained', 'automedian', 'automean', 'mean', 'meanover', 'medianover'")
     
     def fit(self,X):
         print("Must define a fit function")

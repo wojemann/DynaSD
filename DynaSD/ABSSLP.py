@@ -135,4 +135,7 @@ class ABSSLP(DynaSDBase):
         return features_df
     
     def __call__(self, *args):
-        return self.forward(*args) 
+        return self.forward(*args)
+    
+    def _get_pretrained_threshold(self):
+        return 297.250971

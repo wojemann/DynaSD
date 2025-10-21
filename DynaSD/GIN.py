@@ -184,3 +184,30 @@ class GIN(NDDBase):
     
     def __str__(self):
         return "GIN"
+    
+    def _get_pretrained_threshold(self):
+        return 0.947901
+
+    def _aggregate_threshold(self, boundaries, method):
+        """
+        Helper function to aggregate channel boundaries into final threshold.
+        """
+        boundary = 0.535674
+        if method == 'mean':
+            return np.nanmean(boundaries) + np.nanstd(boundaries)
+        elif method == 'automean':
+            if np.sum(boundaries > boundary) == 0:
+                return self._get_pretrained_threshold()
+            else:
+                return np.nanmean(boundaries[boundaries > boundary])
+        elif method == 'automedian':
+            if np.sum(boundaries > boundary) == 0:
+                return self._get_pretrained_threshold()
+            else:
+                return np.nanmedian(boundaries[boundaries > boundary])
+        elif method == 'meanover':
+            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
+        elif method == 'medianover':
+            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
+        else:
+            raise ValueError(f"Unknown aggregation method: {method}")

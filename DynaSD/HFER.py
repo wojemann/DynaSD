@@ -97,3 +97,6 @@ class HFER(DynaSDBase):
             all_band_powers.append(band_powers)
         
         return np.column_stack(all_band_powers)
+
+    def _get_pretrained_threshold(self):
+        return 52.426548
