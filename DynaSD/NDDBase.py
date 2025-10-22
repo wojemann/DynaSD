@@ -47,7 +47,8 @@ class NDDBase(DynaSDBase):
         
         # Performance optimization parameters for smaller models
         # Scale workers based on available cores - more workers for data loading efficiency
-        default_workers = min(12, torch.get_num_threads()) if torch.get_num_threads() >= 8 else 4
+        # default_workers = min(12, torch.get_num_threads()) if torch.get_num_threads() >= 8 else 4
+        default_workers = 0
         self.num_workers = training_kwargs.get('num_workers', default_workers)
         self.pin_memory = training_kwargs.get('pin_memory', use_cuda and torch.cuda.is_available())
         self.persistent_workers = training_kwargs.get('persistent_workers', True)
@@ -855,7 +856,7 @@ class NDDBase(DynaSDBase):
         self.corr_df = corr_df
         self.ndd_df = ndd
 
-        return self.ndd_df
+        return self.mse_df
 
     def predict_multistep(self, X):
         """

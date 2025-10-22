@@ -43,7 +43,7 @@ class MultiStepGRU(nn.Module):
                 out_dim = self.input_size * 2
             input_stack_layers.append(nn.Linear(in_dim, out_dim))
             input_stack_layers.append(nn.GELU())
-            input_stack_layers.append(nn.LayerNorm(out_dim))
+            # input_stack_layers.append(nn.LayerNorm(out_dim))
         self.input_stack = nn.Sequential(*input_stack_layers)
         
         self.projection = nn.Linear(hidden_size, input_size)
@@ -90,7 +90,7 @@ class MultiStepGRU(nn.Module):
         first_prediction = self.projection(gru_output[:, -1:, :])  # (B, 1, D)
         # Residual skip from the last data-space input
         last_data_step = input_sequence[:, -1:, :]  # (B, 1, D)
-        first_prediction = first_prediction + self.skip_weight * self.input_projection(last_data_step)
+        first_prediction = first_prediction #+ self.skip_weight * self.input_projection(last_data_step)
         forecasts.append(first_prediction.squeeze(1))  # (B, D)
         current_input_data_space = first_prediction  # keep in data space (B, 1, D)
         
@@ -100,7 +100,7 @@ class MultiStepGRU(nn.Module):
             gru_output_step, current_hidden = self.gru(gru_in, current_hidden)
             prediction = self.projection(gru_output_step)  # (B, 1, D)
             # Residual skip from current data-space input
-            prediction = prediction + self.skip_weight * self.input_projection(current_input_data_space)
+            prediction = prediction #+ self.skip_weight * self.input_projection(current_input_data_space)
             forecasts.append(prediction.squeeze(1))
             # Next step uses the data-space prediction
             current_input_data_space = prediction
