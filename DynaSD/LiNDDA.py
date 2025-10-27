@@ -190,7 +190,6 @@ class LiNDDA(NDDBase):
                  num_epochs=10,
                  batch_size=1024,
                  lr=0.01,
-                 lambda_zcr=0.1,        # Weight for zero-crossing rate loss
                  use_cuda=False,
                  closeform=False,       # Use sklearn LinearRegression instead of torch
                  **kwargs):
@@ -205,7 +204,6 @@ class LiNDDA(NDDBase):
         self.lr = lr
         self.closeform = closeform
         self.train = True
-    
     def fit(self, X):
         """Fit the Linear forecasting model using either torch or sklearn"""
         input_size = X.shape[1]
@@ -362,7 +360,12 @@ class LiNDDA(NDDBase):
             return self.predict_multistep(X)
 
     def _get_pretrained_threshold(self):
-        return 0.940923
+        if (self.sequence_length == 5) and (self.forecast_length == 4):
+            if self.threshold_agg == 'median':
+                return 1.00593672692775
+            else:
+                return 1.29359010100091      
+        
 
     def _aggregate_threshold(self, boundaries, method):
         """

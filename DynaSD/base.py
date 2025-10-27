@@ -154,7 +154,7 @@ class DynaSDBase:
     def _get_pretrained_threshold(self):
         return None
 
-    def get_threshold(self, sz_prob, method='automedian', verbose=False, seed=100):
+    def get_threshold(self, sz_prob, method='automedian', verbose=False, seed=100, threshold_agg='median'):
         """
         Calculate seizure detection threshold using specified method.
         
@@ -183,6 +183,7 @@ class DynaSDBase:
         
         # For constant value method, return fixed threshold immediately
         if method == 'pretrained':
+            self.threshold_agg = threshold_agg
             self.threshold = self._get_pretrained_threshold()
             return self.threshold
             
