@@ -658,8 +658,11 @@ class NDDBase(DynaSDBase):
         
         # Vectorized window assignment: for each sequence, find overlapping windows
         # Using broadcasting: (nwins, 1) vs (1, n_sequences)
-        overlaps = (seq_starts[np.newaxis, :] < window_ends[:, np.newaxis]) & \
-                   (seq_ends[np.newaxis, :] > window_starts[:, np.newaxis])
+        # overlaps = (seq_starts[np.newaxis, :] < window_ends[:, np.newaxis]) & \
+        #            (seq_ends[np.newaxis, :] > window_starts[:, np.newaxis])
+        # Haoer's Idea
+        overlaps = (seq_starts[np.newaxis, :] >= window_starts[:, np.newaxis]) & \
+                   (seq_ends[np.newaxis, :] < window_ends[:, np.newaxis])
         
         # Aggregate MSE per window
         window_mse = np.full((nwins, n_channels), np.nan)
@@ -675,90 +678,90 @@ class NDDBase(DynaSDBase):
         
         return mse_df
     
-    def _aggregate_sequences_to_windows(self, seq_results, X):
-        """
-        LEGACY: Aggregate sequence-level results (with full sequences) into windows.
-        Used when correlation is needed. Falls back to MSE-only if sequences not present.
+    # def _aggregate_sequences_to_windows(self, seq_results, X):
+    #     """
+    #     LEGACY: Aggregate sequence-level results (with full sequences) into windows.
+    #     Used when correlation is needed. Falls back to MSE-only if sequences not present.
         
-        Args:
-            seq_results: List of dictionaries with sequence results
-            X: Original input DataFrame
+    #     Args:
+    #         seq_results: List of dictionaries with sequence results
+    #         X: Original input DataFrame
             
-        Returns:
-            tuple: (mse_df, corr_df) - DataFrames with channel names as columns
-        """
-        # If only MSE is present, use optimized path
-        if seq_results and 'mse' in seq_results[0] and 'predicted_seq' not in seq_results[0]:
-            mse_df = self._aggregate_sequences_to_windows_mse(seq_results, X)
-            return mse_df, None
+    #     Returns:
+    #         tuple: (mse_df, corr_df) - DataFrames with channel names as columns
+    #     """
+    #     # If only MSE is present, use optimized path
+    #     if seq_results and 'mse' in seq_results[0] and 'predicted_seq' not in seq_results[0]:
+    #         mse_df = self._aggregate_sequences_to_windows_mse(seq_results, X)
+    #         return mse_df, None
         
-        n_channels = X.shape[1]
+    #     n_channels = X.shape[1]
         
-        if not seq_results:
-            raise ValueError("No sequences provided for aggregation")
+    #     if not seq_results:
+    #         raise ValueError("No sequences provided for aggregation")
         
-        max_sequence_time = max(s['target_end_time'] for s in seq_results)
+    #     max_sequence_time = max(s['target_end_time'] for s in seq_results)
         
-        # Create windows
-        window_starts = []
-        current_time = 0.0
-        while current_time + self.w_size <= max_sequence_time:
-            window_starts.append(current_time)
-            current_time += self.w_stride
+    #     # Create windows
+    #     window_starts = []
+    #     current_time = 0.0
+    #     while current_time + self.w_size < max_sequence_time:
+    #         window_starts.append(current_time)
+    #         current_time += self.w_stride
         
-        nwins = len(window_starts)
-        window_times = [(start, start + self.w_size) for start in window_starts]
+    #     nwins = len(window_starts)
+    #     window_times = [(start, start + self.w_size) for start in window_starts]
         
-        # Initialize feature arrays
-        window_features = {
-            'mse': np.full((nwins, n_channels), np.nan),
-            'corr': np.full((nwins, n_channels), np.nan)
-        }
+    #     # Initialize feature arrays
+    #     window_features = {
+    #         'mse': np.full((nwins, n_channels), np.nan),
+    #         'corr': np.full((nwins, n_channels), np.nan)
+    #     }
         
-        # Aggregate sequences into windows
-        seq_idx = 0
-        for win_idx, (win_start, win_end) in enumerate(window_times):
-            sequences_in_window = []
+    #     # Aggregate sequences into windows
+    #     seq_idx = 0
+    #     for win_idx, (win_start, win_end) in enumerate(window_times):
+    #         sequences_in_window = []
             
-            # Start from last position (sequences are time-ordered)
-            while seq_idx < len(seq_results):
-                seq_result = seq_results[seq_idx]
-                seq_start = seq_result['seq_start_time']
-                seq_end = seq_result['target_end_time']
+    #         # Start from last position (sequences are time-ordered)
+    #         while seq_idx < len(seq_results):
+    #             seq_result = seq_results[seq_idx]
+    #             seq_start = seq_result['seq_start_time']
+    #             seq_end = seq_result['target_end_time']
                 
-                # If sequence starts after window, break and rewind
-                if seq_start >= win_end:
-                    break
+    #             # If sequence starts after window, break and rewind
+    #             if seq_start >= win_end:
+    #                 break
                 
-                # Check for overlap
-                if seq_start < win_end and seq_end > win_start:
-                    sequences_in_window.append(seq_result)
+    #             # Check for overlap
+    #             if seq_start < win_end and seq_end > win_start:
+    #                 sequences_in_window.append(seq_result)
                 
-                seq_idx += 1
+    #             seq_idx += 1
             
-            # Reset for next window (sequences can overlap multiple windows)
-            seq_idx = max(0, seq_idx - len(sequences_in_window))
+    #         # Reset for next window (sequences can overlap multiple windows)
+    #         seq_idx = max(0, seq_idx - len(sequences_in_window))
             
-            # Aggregate if we have sequences
-            if sequences_in_window:
-                if 'predicted_seq' in sequences_in_window[0] and 'target_seq' in sequences_in_window[0]:
-                    try:
-                        combined_predicted = np.concatenate([s['predicted_seq'] for s in sequences_in_window], axis=0).T
-                        combined_target = np.concatenate([s['target_seq'] for s in sequences_in_window], axis=0).T
+    #         # Aggregate if we have sequences
+    #         if sequences_in_window:
+    #             if 'predicted_seq' in sequences_in_window[0] and 'target_seq' in sequences_in_window[0]:
+    #                 try:
+    #                     combined_predicted = np.concatenate([s['predicted_seq'] for s in sequences_in_window], axis=0).T
+    #                     combined_target = np.concatenate([s['target_seq'] for s in sequences_in_window], axis=0).T
                         
-                        window_features['corr'][win_idx] = np.array([
-                            np.corrcoef(a, b)[0, 1] if np.std(a) > 0 and np.std(b) > 0 else 0.0
-                            for a, b in zip(combined_predicted, combined_target)
-                        ])
-                        window_features['mse'][win_idx] = np.sqrt(np.mean((combined_predicted - combined_target) ** 2, axis=1))
-                    except Exception:
-                        pass
+    #                     window_features['corr'][win_idx] = np.array([
+    #                         np.corrcoef(a, b)[0, 1] if np.std(a) > 0 and np.std(b) > 0 else 0.0
+    #                         for a, b in zip(combined_predicted, combined_target)
+    #                     ])
+    #                     window_features['mse'][win_idx] = np.sqrt(np.mean((combined_predicted - combined_target) ** 2, axis=1))
+    #                 except Exception:
+    #                     pass
         
-        mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
-        corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
-        self.window_start_times = np.array(window_starts)
+    #     mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
+    #     corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
+    #     self.window_start_times = np.array(window_starts)
         
-        return mse_df, corr_df
+    #     return mse_df, corr_df
 
     def _get_features(self, X):
         """
