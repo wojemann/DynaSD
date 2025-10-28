@@ -638,14 +638,15 @@ class NDDBase(DynaSDBase):
         if not seq_results:
             raise ValueError("No sequences provided for aggregation")
         
-        max_sequence_time = max(s['target_end_time'] for s in seq_results)
-        
-        # Create windows
-        window_starts = []
-        current_time = 0.0
-        while current_time + self.w_size <= max_sequence_time:
-            window_starts.append(current_time)
-            current_time += self.w_stride
+        # max_sequence_time = max(s['target_end_time'] for s in seq_results) + self.forecast_length/self.fs
+        # print("Max sequence time:", max_sequence_time)
+        # # # Create windows
+        # window_starts = []
+        # current_time = 0.0
+        # while current_time + self.w_size < max_sequence_time:
+        #     window_starts.append(current_time)
+        #     current_time += self.w_stride
+        window_starts = self.get_win_times(X.shape[0])
         
         nwins = len(window_starts)
         window_starts = np.array(window_starts)
@@ -1009,5 +1010,5 @@ class NDDBase(DynaSDBase):
         
         return predicted_df_scaled
     
-    def get_win_times(self, n_samples):
-        return self.window_start_times if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)
+    # def get_win_times(self, n_samples):
+    #     return self.window_start_times if hasattr(self, 'window_start_times') else super().get_win_times(n_samples)

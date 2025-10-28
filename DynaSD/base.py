@@ -22,9 +22,8 @@ class DynaSDBase:
         return pd.DataFrame(self.scaler.transform(x),columns=col_names)
     
     def get_win_times(self, n_samples):
-        win_len = int(self.w_size * self.fs)
-        step = int(self.w_stride * self.fs)
-        n_windows = (n_samples - win_len) // step + 1
+        data_len = n_samples / self.fs
+        n_windows = np.floor((data_len - self.w_size)/self.w_stride) + 1
         return np.arange(n_windows) * self.w_stride
     
     def get_onset_and_spread(self, sz_prob, threshold=None,
