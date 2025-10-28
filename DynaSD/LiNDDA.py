@@ -227,7 +227,7 @@ class LiNDDA(NDDBase):
             )
             
             # Convert to numpy and flatten input sequences
-            X_train = input_data.view(input_data.size(0), -1).numpy()  # (n_samples, seq_len * input_size)
+            X_train = input_data.contiguous().view(input_data.size(0), -1).numpy()  # (n_samples, seq_len * input_size)
             y_train = target_data.squeeze(1).numpy()  # (n_samples, input_size)
             
             # Fit sklearn model
