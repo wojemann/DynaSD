@@ -57,7 +57,7 @@ class NDDBase(DynaSDBase):
         
         # Sequence caching for performance
         self._sequence_cache = {}
-        self._cache_enabled = True
+        self._cache_enabled = False
     
     def _get_data_hash(self, data, sequence_length, forecast_length, stride=None):
         """
@@ -228,12 +228,12 @@ class NDDBase(DynaSDBase):
         # Create sliding windows for the total sequence length
         try:
             # Create windows of size total_seq_length
-            windows = sliding_window_view(data_np, window_shape=(total_seq_length, n_channels), axis=(0, 1))
-            
+            windows = sliding_window_view(data_np, window_shape=(total_seq_length, n_channels), axis=(0,1))
+            windows = windows.squeeze()
             # Extract sequences at the specified stride
             sequence_indices = np.arange(0, n_sequences) * stride
-            selected_windows = windows[sequence_indices, 0]  # Shape: (n_sequences, total_seq_length, n_channels)
-            
+            selected_windows = windows[sequence_indices]  # Shape: (n_sequences, total_seq_length, n_channels)
+
             # Split into input and target sequences
             input_data = selected_windows[:, :sequence_length, :]  # (n_sequences, sequence_length, n_channels)
             target_data = selected_windows[:, sequence_length:, :]  # (n_sequences, forecast_length, n_channels)
@@ -648,6 +648,15 @@ class NDDBase(DynaSDBase):
         #     current_time += self.w_stride
         window_starts = self.get_win_times(X.shape[0])
         
+        max_sequence_time = max(s['target_end_time'] for s in seq_results) + self.forecast_length/self.fs
+        
+        # Create windows
+        window_starts = []
+        current_time = 0.0
+        while current_time + self.w_size <= max_sequence_time:
+            window_starts.append(current_time)
+            current_time += self.w_stride
+
         nwins = len(window_starts)
         window_starts = np.array(window_starts)
         window_ends = window_starts + self.w_size

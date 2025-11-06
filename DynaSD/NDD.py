@@ -1,13 +1,7 @@
 from .NDDBase import NDDBase
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
-import pandas as pd
-import warnings
-from tqdm import tqdm
-from .utils import num_wins, MovingWinClips
 
 class MultiStepGRU(nn.Module):
     """GRU for autoregressive forecasting without skip connections or input stacks"""
@@ -26,7 +20,7 @@ class MultiStepGRU(nn.Module):
         self.projection = nn.Linear(hidden_size, input_size)
         
         # Initialize weights properly to prevent vanishing gradients
-        self._init_weights()
+        # self._init_weights()
     
     def _init_weights(self):
         """Initialize weights to prevent vanishing gradients and state collapse"""
@@ -126,7 +120,7 @@ class NDD(NDDBase):
             sequence_length=self.sequence_length,
             forecast_length=1, # Train with teacher forcing
             num_epochs=self.num_epochs,
-            batch_size=self.batch_size,
+            batch_size='full',
             lr=self.lr,
             early_stopping=self.early_stopping,
             val_split=self.val_split,

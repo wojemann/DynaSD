@@ -21,6 +21,12 @@ class DynaSDBase:
         col_names = x.columns
         return pd.DataFrame(self.scaler.transform(x),columns=col_names)
     
+    # def get_win_times(self, n_samples):
+    #     win_len = int(self.w_size * self.fs)
+    #     step = int(self.w_stride * self.fs)
+    #     n_windows = (n_samples - win_len) // step + 1
+    #     return np.arange(n_windows) * self.w_stride
+
     def get_win_times(self, n_samples):
         data_len = n_samples / self.fs
         n_windows = np.floor((data_len - self.w_size)/self.w_stride) + 1
@@ -35,34 +41,39 @@ class DynaSDBase:
         if threshold is None:
             threshold = self.threshold
         
-        sz_clf = (sz_prob > threshold).reset_index(drop=True)
         filter_w_idx = np.floor((filter_w - self.w_size)/self.w_stride).astype(int) + 1
-        sz_clf = pd.DataFrame(sc.ndimage.median_filter(sz_clf, size=filter_w_idx, mode='nearest', axes=0, origin=0), columns=sz_prob.columns)
+
+        sz_prob = pd.DataFrame(sc.ndimage.uniform_filter1d(sz_prob, size=filter_w_idx, mode='nearest', axis=0, origin=0), columns=sz_prob.columns)
+
+        sz_clf = (sz_prob > threshold).reset_index(drop=True)
+        # sz_clf = pd.DataFrame(sc.ndimage.median_filter(sz_clf, size=filter_w_idx, mode='nearest', axes=0, origin=0), columns=sz_prob.columns)
         seized_idxs = np.any(sz_clf, axis=0)
         rwin_size_idx = np.floor((rwin_size - self.w_size)/self.w_stride).astype(int) + 1
         rwin_req_idx = np.floor((rwin_req - self.w_size)/self.w_stride).astype(int) + 1
         
         # Use convolution for faster sliding window computation
-        # Use convolution for faster sliding window computation
-        kernel = np.ones(rwin_size_idx)
-        sz_spread_data = np.zeros((len(sz_clf) - rwin_size_idx + 1, sz_clf.shape[1]))
+        if len(sz_clf) > rwin_size_idx - 1:
+            kernel = np.ones(rwin_size_idx)
+            sz_spread_data = np.zeros((len(sz_clf) - rwin_size_idx + 1, sz_clf.shape[1]))
 
-        for i, col in enumerate(sz_clf.columns):
-            sliding_sums = np.convolve(sz_clf[col].astype(int), kernel, mode='valid')
-            sz_spread_data[:, i] = (sliding_sums >= rwin_req_idx).astype(int)
+            for i, col in enumerate(sz_clf.columns):
+                sliding_sums = np.convolve(sz_clf[col].astype(int), kernel, mode='valid')
+                sz_spread_data[:, i] = (sliding_sums >= rwin_req_idx).astype(int)
 
-        sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
+            sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
 
-        # Pad at the END with the last valid row (not zeros)
-        missing_rows = rwin_size_idx - 1
-        if len(sz_spread_idxs_all) > 0:
-            last_valid_row = sz_spread_idxs_all.iloc[-1]
-            padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-            sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
+            # Pad at the END with the last valid row (not zeros)
+            missing_rows = rwin_size_idx - 1
+            if len(sz_spread_idxs_all) > 0:
+                last_valid_row = sz_spread_idxs_all.iloc[-1]
+                padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
+                sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
+            else:
+                # Handle edge case where convolution produces no output
+                sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
+            sz_clf_ff = sz_spread_idxs_all_padded * sz_clf
         else:
-            # Handle edge case where convolution produces no output
-            sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
-        sz_clf_ff = sz_spread_idxs_all_padded * sz_clf
+            sz_clf_ff = sz_clf
         
         # Forward-fill logic continues unchanged...
         sz_spread_idxs = sz_clf_ff.loc[:,seized_idxs]
@@ -75,12 +86,19 @@ class DynaSDBase:
             sz_order = np.argsort(first_sz_idxs)
             sz_idxs_arr = first_sz_idxs.iloc[sz_order].to_numpy()
             sz_ch_arr = first_sz_idxs.index[sz_order].to_numpy()
+            # print(sz_prob.columns[seized_idxs])
             
         else:
             sz_ch_arr = []
             sz_idxs_arr = np.array([])
 
         sz_idxs_df = pd.DataFrame(sz_idxs_arr.reshape(1,-1),columns=sz_ch_arr)
+
+        # Filling in non-seizing channels with 0 or na
+        undetected_chs = [col for col in sz_prob.columns if col not in sz_ch_arr]
+        sz_idxs_df[undetected_chs] = np.nan
+        sz_clf_ff[undetected_chs] = 0
+
 
         if ret_smooth_mat:
             

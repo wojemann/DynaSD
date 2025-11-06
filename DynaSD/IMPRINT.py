@@ -274,12 +274,15 @@ class IMPRINT(DynaSDBase):
                             ret_smooth_mat=False,
                             filter_w = None, # seconds
                             rwin_size = None, # seconds
-                            rwin_req = None # seconds
+                            rwin_req = None, # seconds
+                            legacy = False # use legacy imprint algorithm
                             ):
     
         """
         Imprint-based onset detection with dsosd-compatible interface
         """
+        if not legacy:
+            return super().get_onset_and_spread(sz_prob,threshold,ret_smooth_mat,filter_w,rwin_size,rwin_req)
         
         # Use imprint parameters if not provided
         if threshold is None:
