@@ -10,7 +10,7 @@ class MultiStepGRU(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.gru = nn.GRU(
+        self.gru = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size, 
             num_layers=num_layers,
@@ -78,7 +78,7 @@ class NDD(NDDBase):
                  w_size=1, 
                  w_stride=0.5,
                  num_epochs=10,
-                 batch_size=1024,
+                 batch_size='full',
                  lr=0.01,
                  use_cuda=False,
                  **kwargs):

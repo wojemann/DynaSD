@@ -359,7 +359,7 @@ class LiNDDA(NDDBase):
             if self.threshold_agg == 'median':
                 return 1.00593672692775
             else:
-                return 1.29359010100091      
+                return 1.29359010100091
         
 
     def _aggregate_threshold(self, boundaries, method):

@@ -68,10 +68,11 @@ class DynaSDBase:
                 last_valid_row = sz_spread_idxs_all.iloc[-1]
                 padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
                 sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
+            
             else:
                 # Handle edge case where convolution produces no output
                 sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
-            sz_clf_ff = sz_spread_idxs_all_padded * sz_clf
+            sz_clf_ff = sz_spread_idxs_all_padded # * sz_clf # This effectively undoes all of the convolution that we just did
         else:
             sz_clf_ff = sz_clf
         

@@ -10,7 +10,6 @@ import logging
 import json
 import re
 from os.path import join as ospj
-from ieeg.auth import Session
 
 # UTILITY FUNCTIONS
 ## FEATURE EXTRACTION
@@ -73,6 +72,7 @@ def get_iEEG_data(
     outputfile=None,
     force_pull = False
 ):
+    from ieeg.auth import Session
     start_time_usec = int(start_time_usec)
     stop_time_usec = int(stop_time_usec)
     duration = stop_time_usec - start_time_usec

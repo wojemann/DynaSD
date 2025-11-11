@@ -503,7 +503,8 @@ class NDDBase(DynaSDBase):
         # Setup training with optimizations for smaller models
         mse_criterion = nn.MSELoss()
         # Use AdamW with weight decay for better generalization in smaller models
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        # optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-5)
+        optimizer = optim.Adam(model.parameters(), lr=lr)
         
         # Enable optimized attention if available (PyTorch 2.0+)
         if hasattr(torch.backends, 'opt_einsum') and torch.backends.opt_einsum.enabled:
@@ -785,8 +786,9 @@ class NDDBase(DynaSDBase):
                 - corr_df: DataFrame with correlation values, columns = channel names
         """
         X_scaled = self._scaler_transform(X)
+        print(X_scaled.shape)
         input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
-
+        print(input_data.shape, target_data.shape)
         # Create dataset and dataloader - NO workers for inference!
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
@@ -813,7 +815,7 @@ class NDDBase(DynaSDBase):
         
         # Single GPU->CPU transfer of all MSE values
         all_mse = torch.cat(mse_batches, dim=0).cpu().numpy()  # (n_sequences, n_channels)
-        
+        print(all_mse.shape)
         # Build seq_results with MSE only (no full sequences)
         seq_results = []
         for seq_idx, seq_pos in enumerate(seq_positions):
@@ -844,21 +846,21 @@ class NDDBase(DynaSDBase):
         ndd = pd.DataFrame()
         mse_z = pd.DataFrame()
         
-        for ch in X.columns:
-            mse_y = mse_df[ch].to_numpy().reshape(-1,1)
+        # for ch in X.columns:
+        #     mse_y = mse_df[ch].to_numpy().reshape(-1,1)
             
-            # Use correlation if available, otherwise MSE-only
-            if corr_df is not None:
-                corr_y = corr_df[ch].to_numpy().reshape(-1,1)
-                f = np.concatenate((mse_y, corr_y), axis=1)
-                m = self.dist_params[ch]['m']
-                R = self.dist_params[ch]['R']
-                ri = np.linalg.solve(R.T, (f - m).T)
-                ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
-            else:
-                # MSE-only mode: use z-scored MSE as NDD
-                mse_z[ch] = np.array((mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']).reshape(-1,)
-                ndd[ch] = mse_z[ch]
+        #     # Use correlation if available, otherwise MSE-only
+        #     if corr_df is not None:
+        #         corr_y = corr_df[ch].to_numpy().reshape(-1,1)
+        #         f = np.concatenate((mse_y, corr_y), axis=1)
+        #         m = self.dist_params[ch]['m']
+        #         R = self.dist_params[ch]['R']
+        #         ri = np.linalg.solve(R.T, (f - m).T)
+        #         ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
+        #     else:
+        #         # MSE-only mode: use z-scored MSE as NDD
+        #         mse_z[ch] = np.array((mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']).reshape(-1,)
+        #         ndd[ch] = mse_z[ch]
         
         # Store window times using new windowing
         self.time_wins = self.window_start_times
