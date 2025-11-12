@@ -759,21 +759,21 @@ class NDDBase(DynaSDBase):
         ndd = pd.DataFrame()
         mse_z = pd.DataFrame()
         
-        # for ch in X.columns:
-        #     mse_y = mse_df[ch].to_numpy().reshape(-1,1)
+        for ch in X.columns:
+            mse_y = mse_df[ch].to_numpy().reshape(-1,1)
             
-        #     # Use correlation if available, otherwise MSE-only
-        #     if corr_df is not None:
-        #         corr_y = corr_df[ch].to_numpy().reshape(-1,1)
-        #         f = np.concatenate((mse_y, corr_y), axis=1)
-        #         m = self.dist_params[ch]['m']
-        #         R = self.dist_params[ch]['R']
-        #         ri = np.linalg.solve(R.T, (f - m).T)
-        #         ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
-        #     else:
-        #         # MSE-only mode: use z-scored MSE as NDD
-        #         mse_z[ch] = np.array((mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']).reshape(-1,)
-        #         ndd[ch] = mse_z[ch]
+            # Use correlation if available, otherwise MSE-only
+            if corr_df is not None:
+                corr_y = corr_df[ch].to_numpy().reshape(-1,1)
+                f = np.concatenate((mse_y, corr_y), axis=1)
+                m = self.dist_params[ch]['m']
+                R = self.dist_params[ch]['R']
+                ri = np.linalg.solve(R.T, (f - m).T)
+                ndd[ch] = np.sum(ri * ri, axis=0) * (self.dist_params[ch]['n'] - 1)
+            else:
+                # MSE-only mode: use z-scored MSE as NDD
+                mse_z[ch] = np.array((mse_y - self.dist_params[ch]['mse_m']) / self.dist_params[ch]['mse_std']).reshape(-1,)
+                ndd[ch] = mse_z[ch]
         
         # Store window times using new windowing
         self.time_wins = self.window_start_times
