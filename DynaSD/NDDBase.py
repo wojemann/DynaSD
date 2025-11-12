@@ -20,7 +20,7 @@ class NDDBase(DynaSDBase):
         # Extract training-specific parameters before passing to parent
         training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
                           'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
-                          'grad_accumulation_steps']
+                          'grad_accumulation_steps', 'mrse']
         training_kwargs = {}
         
         for param in training_params:
@@ -37,6 +37,7 @@ class NDDBase(DynaSDBase):
         # Model state
         self.model = None
         self.is_fitted = False
+        self.mrse = training_kwargs.get('mrse', False)
         
         # Store training parameters with defaults
         self.early_stopping = training_kwargs.get('early_stopping', False)
@@ -681,98 +682,13 @@ class NDDBase(DynaSDBase):
             seq_mask = overlaps[win_idx]  # Boolean mask of sequences in this window
             if seq_mask.any():
                 # Average MSE across sequences in this window
-                window_mse[win_idx] = np.mean(seq_mse[seq_mask], axis=0)
+                window_mse[win_idx] = np.sqrt(np.mean(seq_mse[seq_mask], axis=0))
         
         # Create DataFrame
         mse_df = pd.DataFrame(window_mse, columns=X.columns)
         self.window_start_times = window_starts
         
         return mse_df
-    
-    # def _aggregate_sequences_to_windows(self, seq_results, X):
-    #     """
-    #     LEGACY: Aggregate sequence-level results (with full sequences) into windows.
-    #     Used when correlation is needed. Falls back to MSE-only if sequences not present.
-        
-    #     Args:
-    #         seq_results: List of dictionaries with sequence results
-    #         X: Original input DataFrame
-            
-    #     Returns:
-    #         tuple: (mse_df, corr_df) - DataFrames with channel names as columns
-    #     """
-    #     # If only MSE is present, use optimized path
-    #     if seq_results and 'mse' in seq_results[0] and 'predicted_seq' not in seq_results[0]:
-    #         mse_df = self._aggregate_sequences_to_windows_mse(seq_results, X)
-    #         return mse_df, None
-        
-    #     n_channels = X.shape[1]
-        
-    #     if not seq_results:
-    #         raise ValueError("No sequences provided for aggregation")
-        
-    #     max_sequence_time = max(s['target_end_time'] for s in seq_results)
-        
-    #     # Create windows
-    #     window_starts = []
-    #     current_time = 0.0
-    #     while current_time + self.w_size < max_sequence_time:
-    #         window_starts.append(current_time)
-    #         current_time += self.w_stride
-        
-    #     nwins = len(window_starts)
-    #     window_times = [(start, start + self.w_size) for start in window_starts]
-        
-    #     # Initialize feature arrays
-    #     window_features = {
-    #         'mse': np.full((nwins, n_channels), np.nan),
-    #         'corr': np.full((nwins, n_channels), np.nan)
-    #     }
-        
-    #     # Aggregate sequences into windows
-    #     seq_idx = 0
-    #     for win_idx, (win_start, win_end) in enumerate(window_times):
-    #         sequences_in_window = []
-            
-    #         # Start from last position (sequences are time-ordered)
-    #         while seq_idx < len(seq_results):
-    #             seq_result = seq_results[seq_idx]
-    #             seq_start = seq_result['seq_start_time']
-    #             seq_end = seq_result['target_end_time']
-                
-    #             # If sequence starts after window, break and rewind
-    #             if seq_start >= win_end:
-    #                 break
-                
-    #             # Check for overlap
-    #             if seq_start < win_end and seq_end > win_start:
-    #                 sequences_in_window.append(seq_result)
-                
-    #             seq_idx += 1
-            
-    #         # Reset for next window (sequences can overlap multiple windows)
-    #         seq_idx = max(0, seq_idx - len(sequences_in_window))
-            
-    #         # Aggregate if we have sequences
-    #         if sequences_in_window:
-    #             if 'predicted_seq' in sequences_in_window[0] and 'target_seq' in sequences_in_window[0]:
-    #                 try:
-    #                     combined_predicted = np.concatenate([s['predicted_seq'] for s in sequences_in_window], axis=0).T
-    #                     combined_target = np.concatenate([s['target_seq'] for s in sequences_in_window], axis=0).T
-                        
-    #                     window_features['corr'][win_idx] = np.array([
-    #                         np.corrcoef(a, b)[0, 1] if np.std(a) > 0 and np.std(b) > 0 else 0.0
-    #                         for a, b in zip(combined_predicted, combined_target)
-    #                     ])
-    #                     window_features['mse'][win_idx] = np.sqrt(np.mean((combined_predicted - combined_target) ** 2, axis=1))
-    #                 except Exception:
-    #                     pass
-        
-    #     mse_df = pd.DataFrame(window_features['mse'], columns=X.columns)
-    #     corr_df = pd.DataFrame(window_features['corr'], columns=X.columns)
-    #     self.window_start_times = np.array(window_starts)
-        
-    #     return mse_df, corr_df
 
     def _get_features(self, X):
         """
@@ -786,9 +702,7 @@ class NDDBase(DynaSDBase):
                 - corr_df: DataFrame with correlation values, columns = channel names
         """
         X_scaled = self._scaler_transform(X)
-        print(X_scaled.shape)
         input_data, target_data, seq_positions = self._prepare_multistep_sequences(X_scaled, self.sequence_length, self.forecast_length, ret_positions=True)
-        print(input_data.shape, target_data.shape)
         # Create dataset and dataloader - NO workers for inference!
         dataset = TensorDataset(input_data, target_data)
         batch_size = len(dataset) if self.batch_size == 'full' else self.batch_size
@@ -810,12 +724,11 @@ class NDDBase(DynaSDBase):
                 
                 # Compute MSE per-sequence, per-channel ON GPU
                 # Shape: (batch, forecast_length, channels) -> (batch, channels)
-                seq_mse = torch.sqrt(torch.mean((predictions - targets) ** 2, dim=1))
+                seq_mse = torch.mean((predictions - targets) ** 2, dim=1)
                 mse_batches.append(seq_mse)
         
         # Single GPU->CPU transfer of all MSE values
         all_mse = torch.cat(mse_batches, dim=0).cpu().numpy()  # (n_sequences, n_channels)
-        print(all_mse.shape)
         # Build seq_results with MSE only (no full sequences)
         seq_results = []
         for seq_idx, seq_pos in enumerate(seq_positions):
