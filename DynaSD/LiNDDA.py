@@ -199,6 +199,21 @@ class LiNDDA(NDDBase):
         self.lr = lr
         self.closeform = closeform
         self.train = True
+        # Feature for threshold aggregation
+        # boundary_dict = {3:,4:,5:,}
+
+        boundary_dict = {
+            1:1.007301904,
+            2:0.999779592,
+            3:1.110660322,
+            4:1.19550413,
+            5:1.270567546,
+            6:1.40638846,
+            7:1.456485738,
+        }
+
+        self._boundary = boundary_dict[self.sequence_length]
+
     def fit(self, X):
         """Fit the Linear forecasting model using either torch or sklearn"""
         input_size = X.shape[1]
@@ -355,36 +370,32 @@ class LiNDDA(NDDBase):
             return self.predict_multistep(X)
 
     def _get_pretrained_threshold(self):
-        if (self.sequence_length == 5) and (self.forecast_length == 4):
-            if self.threshold_agg == 'median':
-                return 1.00593672692775
-            else:
-                return 1.29359010100091
-        
+        if self.threshold_agg == 'median':
+            threshold_dict = {
+                1:1.052862153,
+                2:1.042927852,
+                3:1.177873464,
+                4:1.221112922,
+                5:1.23684088,
+                6:1.270521459,
+                7:1.298170561,
+                8:1.329418523,
+            }
+            
+        elif self.threshold_agg == 'mean':
+            threshold_dict = {
+                1:1.448038413,
+                2:1.529461557,
+                3:1.699102267,
+                4:1.815774481,
+                5:1.843776472,
+                6:2.013400701,
+                7:2.045898252,
+                8:2.16920366,
+            }
 
-    def _aggregate_threshold(self, boundaries, method):
-        """
-        Helper function to aggregate channel boundaries into final threshold.
-        """
-        boundary = 0.544057
-        if method == 'mean':
-            return np.nanmean(boundaries) + np.nanstd(boundaries)
-        elif method == 'automean':
-            if np.sum(boundaries > boundary) == 0:
-                return 0.940923
-            else:
-                return np.nanmean(boundaries[boundaries > boundary])
-        elif method == 'automedian':
-            if np.sum(boundaries > boundary) == 0:
-                return 0.940923
-            else:
-                return np.nanmedian(boundaries[boundaries > boundary])
-        elif method == 'meanover':
-            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
-        elif method == 'medianover':
-            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
-        else:
-            raise ValueError(f"Unknown aggregation method: {method}")
+        self._threshold = threshold_dict[self.sequence_length]
+        return self._threshold
 
     def __str__(self):
         return "LiNDDA"

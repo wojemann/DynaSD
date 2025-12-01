@@ -165,12 +165,34 @@ class DynaSDBase:
             all_chs.append(sz_prob.columns[i_ch])
         
         return np.array(all_gbounds)
-
-    def _aggregate_threshold(self, boundaries, method):
-        return None
     
     def _get_pretrained_threshold(self):
         return None
+    
+    def _aggregate_threshold(self, boundaries, method):
+        """
+        Helper function to aggregate channel boundaries into final threshold.
+        To utilize this function, you need to set the self._boundary attribute in the subclass as well as the self._get_pretrained_threshold() function.
+        """
+
+        if method == 'mean':
+            return np.nanmean(boundaries) + np.nanstd(boundaries)
+        elif method == 'automean':
+            if np.sum(boundaries > self._boundary) == 0:
+                return self._get_pretrained_threshold()
+            else:
+                return np.nanmean(boundaries[boundaries > self._boundary])
+        elif method == 'automedian':
+            if np.sum(boundaries > self._boundary) == 0:
+                return self._get_pretrained_threshold()
+            else:
+                return np.nanmedian(boundaries[boundaries > self._boundary])
+        elif method == 'meanover':
+            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
+        elif method == 'medianover':
+            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
+        else:
+            raise ValueError(f"Unknown aggregation method: {method}")
 
     def get_threshold(self, sz_prob, method='automedian', verbose=False, seed=100, threshold_agg='median'):
         """
@@ -200,8 +222,8 @@ class DynaSDBase:
         """
         
         # For constant value method, return fixed threshold immediately
+        self.threshold_agg = threshold_agg
         if method == 'pretrained':
-            self.threshold_agg = threshold_agg
             self.threshold = self._get_pretrained_threshold()
             return self.threshold
             

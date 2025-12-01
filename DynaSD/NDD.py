@@ -18,7 +18,6 @@ class MultiStepGRU(nn.Module):
         )
         
         self.projection = nn.Linear(hidden_size, input_size)
-        
         # Initialize weights properly to prevent vanishing gradients
         # self._init_weights()
     
@@ -93,6 +92,7 @@ class NDD(NDDBase):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.lr = lr
+        self._boundary = 1.11771875
     
     def _prepare_sequences(self, data, ret_positions=False):
         """Use the shared multi-step sequence preparation from NDDBase"""
@@ -136,28 +136,8 @@ class NDD(NDDBase):
         return "NDD"
     
     def _get_pretrained_threshold(self):
-        return 0.947901
-
-    def _aggregate_threshold(self, boundaries, method):
-        """
-        Helper function to aggregate channel boundaries into final threshold.
-        """
-        boundary = 0.535674
-        if method == 'mean':
-            return np.nanmean(boundaries) + np.nanstd(boundaries)
-        elif method == 'automean':
-            if np.sum(boundaries > boundary) == 0:
-                return self._get_pretrained_threshold()
-            else:
-                return np.nanmean(boundaries[boundaries > boundary])
-        elif method == 'automedian':
-            if np.sum(boundaries > boundary) == 0:
-                return self._get_pretrained_threshold()
-            else:
-                return np.nanmedian(boundaries[boundaries > boundary])
-        elif method == 'meanover':
-            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
-        elif method == 'medianover':
-            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
-        else:
-            raise ValueError(f"Unknown aggregation method: {method}")
+        if self.threshold_agg == 'median':
+            return 1.27661184 # f1 median threshold
+        elif self.threshold_agg == 'mean':
+            return 1.527851971 # phi mean threshold
+        return self._threshold

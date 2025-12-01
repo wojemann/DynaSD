@@ -349,4 +349,9 @@ class IMPRINT(DynaSDBase):
             return sz_idxs_df
             
     def _get_pretrained_threshold(self):
-        return 16.297232
+        if self.threshold_agg == 'median':
+            threshold = 7.110581136 # f1 median threshold
+        elif self.threshold_agg == 'mean':
+            threshold = 12.98448218 # phi mean threshold
+        self._threshold = threshold
+        return self._threshold

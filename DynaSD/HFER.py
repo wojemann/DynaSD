@@ -99,4 +99,9 @@ class HFER(DynaSDBase):
         return np.column_stack(all_band_powers)
 
     def _get_pretrained_threshold(self):
-        return 52.426548
+        if self.threshold_agg == 'median':
+            threshold = 17.5158932 # f1 median threshold
+        elif self.threshold_agg == 'mean':
+            threshold = 61.48649156 # phi mean threshold
+        self._threshold = threshold
+        return self._threshold

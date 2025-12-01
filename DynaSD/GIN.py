@@ -134,7 +134,14 @@ class GIN(NDDBase):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.lr = lr
-        self.residual_init = residual_init
+
+        boundary_dict = {
+            4: 0.968102573,
+            8: 0.965371199,
+            12: 0.963494202,
+        }
+
+        self._boundary = boundary_dict[self.sequence_length]
     
     def _prepare_sequences(self, data, ret_positions=False):
         """Use the shared multi-step sequence preparation from NDDBase"""
@@ -180,28 +187,17 @@ class GIN(NDDBase):
         return "GIN"
     
     def _get_pretrained_threshold(self):
-        return 0.947901
-
-    def _aggregate_threshold(self, boundaries, method):
-        """
-        Helper function to aggregate channel boundaries into final threshold.
-        """
-        boundary = 0.535674
-        if method == 'mean':
-            return np.nanmean(boundaries) + np.nanstd(boundaries)
-        elif method == 'automean':
-            if np.sum(boundaries > boundary) == 0:
-                return self._get_pretrained_threshold()
-            else:
-                return np.nanmean(boundaries[boundaries > boundary])
-        elif method == 'automedian':
-            if np.sum(boundaries > boundary) == 0:
-                return self._get_pretrained_threshold()
-            else:
-                return np.nanmedian(boundaries[boundaries > boundary])
-        elif method == 'meanover':
-            return np.nanmean(boundaries[boundaries > np.nanmean(boundaries)])
-        elif method == 'medianover':
-            return np.nanmedian(boundaries[boundaries > np.nanmedian(boundaries)])
-        else:
-            raise ValueError(f"Unknown aggregation method: {method}")
+        if self.threshold_agg == 'median':
+            threshold_dict = {
+                12: 1.113110258,
+                4: 1.112255053,
+                8: 1.129245982,
+            }
+        elif self.threshold_agg == 'mean':
+            threshold_dict = {
+                12: 1.328668946,
+                4: 1.336084589,
+                8: 1.327192965,
+            }
+        self._threshold = threshold_dict[self.sequence_length]
+        return self._threshold
