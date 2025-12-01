@@ -139,9 +139,11 @@ class ABSSLP(DynaSDBase):
     
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            threshold = 242.8681542 # f1 median threshold
+            # threshold = 242.8681542 # f1 median threshold
+            threshold = 249.5898951 # f1 median threshold from plateau method
         elif self.threshold_agg == 'mean':
-            threshold =  265.9610556 # phi mean threshold
+            # threshold =  265.9610556 # phi mean threshold
+            threshold = 291.1243992 # phi mean threshold from plateau method
         self._threshold = threshold
         return self._threshold
         

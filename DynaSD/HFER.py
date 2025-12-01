@@ -100,8 +100,10 @@ class HFER(DynaSDBase):
 
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            threshold = 17.5158932 # f1 median threshold
+            # threshold = 17.5158932 # f1 median threshold
+            threshold = 17.71236242 # f1 median threshold from plateau method
         elif self.threshold_agg == 'mean':
-            threshold = 61.48649156 # phi mean threshold
+            # threshold = 61.48649156 # phi mean threshold
+            threshold = 70.21385149 # phi mean threshold from plateau method
         self._threshold = threshold
         return self._threshold
