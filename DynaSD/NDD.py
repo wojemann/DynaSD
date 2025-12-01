@@ -137,7 +137,10 @@ class NDD(NDDBase):
     
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            return 1.27661184 # f1 median threshold
+            # return 1.27661184 # f1 median threshold
+            threshold = 1.334605646 # f1 median threshold from plateau method
         elif self.threshold_agg == 'mean':
-            return 1.527851971 # phi mean threshold
+            # return 1.527851971 # phi mean threshold
+            threshold = 1.597843694 # phi mean threshold from plateau method
+        self._threshold = threshold
         return self._threshold

@@ -372,23 +372,23 @@ class LiNDDA(NDDBase):
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
             threshold_dict = {
-                1:1.052862153,
-                2:1.042927852,
-                3:1.177873464,
-                4:1.221112922,
-                5:1.23684088,
+                1:1.214976741,
+                2:1.184929941,
+                3:1.271094122,
+                4:1.305859599,
+                5:1.365673655, # This one and above are from the plateau method, which pushes thresholds slightly higher
                 6:1.270521459,
                 7:1.298170561,
                 8:1.329418523,
             }
-            
+
         elif self.threshold_agg == 'mean':
             threshold_dict = {
-                1:1.448038413,
-                2:1.529461557,
-                3:1.699102267,
-                4:1.815774481,
-                5:1.843776472,
+                1:1.512051479,
+                2:2.311321879,
+                3:1.778046463,
+                4:1.880050923,
+                5:1.913027547, # This one and above are from the plateau method, which pushes thresholds slightly higher
                 6:2.013400701,
                 7:2.045898252,
                 8:2.16920366,

@@ -214,10 +214,13 @@ class WVNT(DynaSDBase):
     
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            return 0.393222243 # f1 median threshold
+            # return 0.393222243 # f1 median threshold old
+            threshold = 0.404058188 # f1 median threshold from plateau method
+
         elif self.threshold_agg == 'mean':
-            return 0.397091486 # phi mean threshold
+            # return 0.397091486 # phi mean threshold old
+            threshold = 0.413293812 # phi mean threshold from plateau method
         elif self.threshold_agg == 'manuscript':
-            return 0.6 # manuscript threshold
+            threshold = 0.6 # manuscript threshold
         self._threshold = threshold
         return self._threshold

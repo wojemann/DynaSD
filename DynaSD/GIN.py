@@ -188,16 +188,16 @@ class GIN(NDDBase):
     
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            threshold_dict = {
-                12: 1.113110258,
-                4: 1.112255053,
-                8: 1.129245982,
+            threshold_dict = { # f1 plateau median threshold
+                12: 1.165221179,
+                # 4: 1.112255053,
+                8: 1.168247258,
             }
         elif self.threshold_agg == 'mean':
-            threshold_dict = {
-                12: 1.328668946,
-                4: 1.336084589,
-                8: 1.327192965,
+            threshold_dict = { # phi plateau mean threshold
+                12: 1.400333862,
+                # 4: 1.336084589,
+                8: 1.390316414,
             }
         self._threshold = threshold_dict[self.sequence_length]
         return self._threshold
