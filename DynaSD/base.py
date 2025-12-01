@@ -66,14 +66,17 @@ class DynaSDBase:
             # Pad at the START with the first valid row (not zeros)
             missing_rows = rwin_size_idx - 1
             if len(sz_spread_idxs_all) > 0:
-                first_valid_row = sz_spread_idxs_all.iloc[0]
-                padding = pd.DataFrame([first_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-                sz_spread_idxs_all_padded = pd.concat([padding, sz_spread_idxs_all], ignore_index=True)
+                # first_valid_row = sz_spread_idxs_all.iloc[0]
+                # padding = pd.DataFrame([first_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
+                # sz_spread_idxs_all_padded = pd.concat([padding, sz_spread_idxs_all], ignore_index=True)
+                last_valid_row = sz_spread_idxs_all.iloc[-1]
+                padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
+                sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
             
             else:
                 # Handle edge case where convolution produces no output
                 sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
-            sz_clf_ff = sz_spread_idxs_all_padded # * sz_clf # This effectively undoes all of the convolution that we just did
+            sz_clf_ff = sz_spread_idxs_all_padded # * sz_clf # This effectively undoes all of the convolution that we just did, so commenting out.
         else:
             sz_clf_ff = sz_clf
         
@@ -124,7 +127,7 @@ class DynaSDBase:
             # Transform data to log space for better Gaussian fitting
             X = sz_prob.iloc[:,i_ch].ffill().to_numpy()
             X_f = np.log(X.reshape(-1,1)+1e-10)
-            X_f = X_f[X_f < np.percentile(X_f,99.99)].reshape(-1,1)
+            X_f = X_f[X_f < np.percentile(X_f,99.99,method='lower')].reshape(-1,1)
             
             # Fit Gaussian mixtures with 1 and 2 components to test for bimodality
             bics = []
