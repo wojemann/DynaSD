@@ -14,6 +14,7 @@ class DynaSDBase:
         self.is_fitted = False
         self.scaler_class = scaler_class
         self.scaler_kwargs = scaler_kwargs  # Additional keyword arguments for the scaler
+        
     def _fit_scaler(self, x):
         self.scaler = self.scaler_class(**self.scaler_kwargs).fit(x)
 
@@ -62,12 +63,12 @@ class DynaSDBase:
 
             sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
 
-            # Pad at the END with the last valid row (not zeros)
+            # Pad at the START with the first valid row (not zeros)
             missing_rows = rwin_size_idx - 1
             if len(sz_spread_idxs_all) > 0:
-                last_valid_row = sz_spread_idxs_all.iloc[-1]
-                padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-                sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
+                first_valid_row = sz_spread_idxs_all.iloc[0]
+                padding = pd.DataFrame([first_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
+                sz_spread_idxs_all_padded = pd.concat([padding, sz_spread_idxs_all], ignore_index=True)
             
             else:
                 # Handle edge case where convolution produces no output

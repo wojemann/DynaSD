@@ -70,7 +70,7 @@ class IMPRINT(DynaSDBase):
         
         return np.column_stack(all_band_powers)
 
-    def get_threshold(self, X=None):
+    def get_mad_threshold(self, X=None):
         return self.mad_thresh
     
     def check_inclusion(self, X):
@@ -272,9 +272,9 @@ class IMPRINT(DynaSDBase):
 
     def get_onset_and_spread(self,sz_prob,threshold=None,
                             ret_smooth_mat=False,
-                            filter_w = None, # seconds
-                            rwin_size = None, # seconds
-                            rwin_req = None, # seconds
+                            filter_w = 10, # seconds
+                            rwin_size = 5, # seconds
+                            rwin_req = 4, # seconds
                             legacy = False # use legacy imprint algorithm
                             ):
     
@@ -282,11 +282,12 @@ class IMPRINT(DynaSDBase):
         Imprint-based onset detection with dsosd-compatible interface
         """
         if not legacy:
+            threshold = self.get_threshold(sz_prob,method='pretrained')
             return super().get_onset_and_spread(sz_prob,threshold,ret_smooth_mat,filter_w,rwin_size,rwin_req)
         
         # Use imprint parameters if not provided
         if threshold is None:
-            threshold = self.mad_thresh
+            threshold = self.get_mad_threshold()
         if rwin_size is None:
             rwin_size = self.rec_thresh
         if rwin_req is None:
@@ -350,8 +351,10 @@ class IMPRINT(DynaSDBase):
             
     def _get_pretrained_threshold(self):
         if self.threshold_agg == 'median':
-            threshold = 7.110581136 # f1 median threshold
+            #threshold = 7.110581136 # f1 median threshold
+            threshold = 7.815584039 # f1 median threshold from plateau method
         elif self.threshold_agg == 'mean':
-            threshold = 12.98448218 # phi mean threshold
+            #threshold = 12.98448218 # phi mean threshold
+            threshold = 13.80000679 # phi mean threshold from plateau method
         self._threshold = threshold
         return self._threshold
