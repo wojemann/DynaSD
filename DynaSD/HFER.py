@@ -33,17 +33,15 @@ class HighFrequencyEnergyRatio(DynaSDBase):
         
         self.tau = 1.0
         self.H = 5.0
-        
+    
+    def __str__(self) -> str:
+        return "HFER"
+
     def get_threshold(self):
         return self.lambda_thresh
 
-    def fit(self, x):
-        """
-        Fit the model on interictal data.
-        """
-        self.scaler = RobustScaler().fit(x)
-        nx = self.scaler.transform(x)
-        self.inter = pd.DataFrame(nx, columns=x.columns)
+    def fit(self, X):
+        self.is_fitted = True
 
     def forward(self, X):
         channels = X.columns.to_list()
@@ -63,37 +61,26 @@ class HighFrequencyEnergyRatio(DynaSDBase):
         return pd.DataFrame(feature_master, columns=channels)
 
     def _compute_single_channel_ER(self, channel_data):
+       
+        # compute bandpower for all windows
         windows = MovingWinClips(channel_data, self.fs, self.w_size, self.w_stride)
         band_powers = self._compute_band_powers(windows)
         
-        band_names = list(self.freq_bands.keys())
-        theta_idx = band_names.index('theta')
-        alpha_idx = band_names.index('alpha') 
-        beta_idx = band_names.index('beta')
-        gamma_idx = band_names.index('gamma')
-
-        # return high to low frequency energy ratio
-        return (band_powers[:, beta_idx] + band_powers[:, gamma_idx]) / \
-               (band_powers[:, theta_idx] + band_powers[:, alpha_idx])
+        # compute ratio of bandpower (beta + gamma) / (theta + alpha) - equivalent to using energy for computing the ratio
+        return (band_powers['beta'] + band_powers['gamma']) / \
+               (band_powers['theta'] + band_powers['alpha'])
     
     def _compute_band_powers(self, window_data):
 
         # Compute PSDs for all windows
         freqs, psds = welch(window_data, fs=self.fs, axis=1)
-        
-        # get frequency masks
-        if not hasattr(self, '_freq_masks'):
-            self._freq_masks = {}
-            for band_name, (low, high) in self.freq_bands.items():
-                self._freq_masks[band_name] = np.logical_and(freqs >= low, freqs <= high)
-        
+
         # compute band powers for all windows
         dx = freqs[1] - freqs[0]
-        all_band_powers = []
+        all_band_powers = {}
         
-        for band_name in self.freq_bands.keys():
-            mask = self._freq_masks[band_name]
-            band_powers = simpson(psds[:, mask], dx=dx, axis=1)
-            all_band_powers.append(band_powers)
+        for band_name, (low, high) in self.freq_bands.items():
+            mask = np.logical_and(freqs >= low, freqs < high)
+            all_band_powers[band_name] = simpson(psds[:, mask], dx=dx, axis=1)
         
-        return np.column_stack(all_band_powers)
+        return all_band_powers
