@@ -134,6 +134,7 @@ class GIN(NDDBase):
         self.num_epochs = num_epochs
         self.batch_size = batch_size
         self.lr = lr
+        self.residual_init = residual_init
 
         boundary_dict = {
             4: 0.968102573,

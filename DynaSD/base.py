@@ -198,14 +198,14 @@ class DynaSDBase:
         else:
             raise ValueError(f"Unknown aggregation method: {method}")
 
-    def get_threshold(self, sz_prob, method='automedian', verbose=False, seed=100, threshold_agg='median'):
+    def get_threshold(self, sz_prob = None, method='automedian', verbose=False, seed=100, threshold_agg='median'):
         """
         Calculate seizure detection threshold using specified method.
         
         Parameters:
         -----------
-        sz_prob : pandas.DataFrame
-            Seizure probability matrix with channels as columns
+        sz_prob : pandas.DataFrame, default=None
+            Seizure probability matrix with channels as columns. If None, the threshold will be returned as the pretrained threshold.
         method : str, default='automedian'
             Threshold calculation method:
             - 'pretrained': Constant value trained on a large seizure onset annotated dataset

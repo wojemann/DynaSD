@@ -202,21 +202,21 @@ class SyntheticSeizureGenerator:
                 bws = [10, 15, 20]
                 heights = [2.0, 1.5, 1.0]
                 exponent = 0.5  # Very flat spectrum
-                scale = 0.5 + np.random.uniform(-0.1, 0.1)
+                scale = 0.3 + np.random.uniform(-0.1, 0.1)
             elif ch in [ch for ch in range(n_channels) if ch not in focal_channels][:2]:
                 # Adjacent propagation
                 peaks = [20, 40]
                 bws = [12, 18]
                 heights = [1.2, 0.8]
                 exponent = -0.4
-                scale = 1 + np.random.uniform(-0.3, 0.3)
+                scale = 1 + np.random.uniform(-0.1, 0.1)
             else:
                 # Distant propagation or baseline
                 peaks = [10, 25]
                 bws = [5, 8]
                 heights = [0.8, 0.5]
                 exponent = -1.3
-                scale = 1 + np.random.uniform(-0.2, 0.2)
+                scale = 1 + np.random.uniform(-0.1, 0.1)
             
             sig = self._create_neural_signal(peaks, bws, heights, exponent, scale, n_seconds)
             signals.append(sig)
