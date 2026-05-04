@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
-from .utils import num_wins, MovingWinClips
+from .utils import num_wins, moving_win_clips
 from .base import DynaSDBase
 from os.path import join as ospj
 
@@ -207,7 +207,7 @@ class WVNT(DynaSDBase):
         nwins = num_wins(len(data_np[:,0]),self.fs,self.w_size,self.w_stride)
         data_mat = np.zeros((nwins,win_len_idx,len(data_ch)))
         for k in range(n_ch):
-            samples = MovingWinClips(data_np[:,k],self.fs,self.w_size,self.w_stride)
+            samples = moving_win_clips(data_np[:,k],self.fs,self.w_size,self.w_stride)
             data_mat[:,:,k] = samples
         data_flat = data_mat.transpose(0,2,1).reshape(-1,win_len_idx)
         return data_flat

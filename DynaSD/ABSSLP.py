@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import RobustScaler
-from .utils import MovingWinClips
+from .utils import moving_win_clips
 from .base import DynaSDBase
 
 class ABSSLP(DynaSDBase):
@@ -63,7 +63,7 @@ class ABSSLP(DynaSDBase):
             Array of time points for each window
         """
         # x should be samples x channels df
-        time_mat = MovingWinClips(np.arange(len(x))/self.fs, self.fs, self.w_size, self.w_stride)
+        time_mat = moving_win_clips(np.arange(len(x))/self.fs, self.fs, self.w_size, self.w_stride)
         return np.ceil(time_mat[:, -1])
 
     def _apply_windowed_function(self, x):
@@ -92,7 +92,7 @@ class ABSSLP(DynaSDBase):
         # Apply function to each channel
         for ch in range(n_channels):
             # Get windowed clips for this channel
-            clips = MovingWinClips(x[ch, :], self.fs, self.w_size, self.w_stride)
+            clips = moving_win_clips(x[ch, :], self.fs, self.w_size, self.w_stride)
             
             # Apply the slope function to each window
             for i, clip in enumerate(clips):

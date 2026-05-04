@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from scipy.integrate import simpson
 from scipy.signal import welch
-from .utils import MovingWinClips
+from .utils import moving_win_clips
 
 
 class IMPRINT(DynaSDBase):
@@ -92,7 +92,7 @@ class IMPRINT(DynaSDBase):
             channel_features = []
             
             # Calculate window times
-            time_mat = MovingWinClips(np.arange(len(X))/self.fs, self.fs, self.w_size, self.w_stride)
+            time_mat = moving_win_clips(np.arange(len(X))/self.fs, self.fs, self.w_size, self.w_stride)
             win_times = time_mat[:, 0]
 
             # Process each channel
@@ -100,7 +100,7 @@ class IMPRINT(DynaSDBase):
             
             for k in range(n_channels):
                 # Extract all windows for this channel at once
-                windows = MovingWinClips(data_np[:, k], self.fs, self.w_size, self.w_stride)
+                windows = moving_win_clips(data_np[:, k], self.fs, self.w_size, self.w_stride)
                 n_windows = windows.shape[0]
                 
                 # Vectorized computations

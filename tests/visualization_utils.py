@@ -312,7 +312,7 @@ def create_comprehensive_model_plot(
     import sys
     from pathlib import Path
     sys.path.append(str(Path(__file__).parent.parent))
-    from DynaSD.utils import plot_iEEG_data
+    from DynaSD.tools.viz import plot_ieeg_data
     
     # Create 2x2 subplot layout
     fig = plt.figure(figsize=figsize)
@@ -322,7 +322,7 @@ def create_comprehensive_model_plot(
 
     # Create a smaller subset for visualization (first 4 channels, 30 seconds)
     baseline_subset = baseline_data.iloc[:,:]
-    baseline_fig, baseline_ax = plot_iEEG_data(
+    baseline_fig, baseline_ax = plot_ieeg_data(
         baseline_subset,
         fs=fs,
         plot_color='blue',
@@ -341,7 +341,7 @@ def create_comprehensive_model_plot(
     ax2 = plt.subplot(2, 2, 2)
     # Create a smaller subset for visualization (first 4 channels, 30 seconds)
     seizure_subset = seizure_data.iloc[:, :]
-    seizure_fig, seizure_ax = plot_iEEG_data(
+    seizure_fig, seizure_ax = plot_ieeg_data(
         seizure_subset,
         fs=fs,
         plot_color='red',

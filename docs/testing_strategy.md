@@ -73,7 +73,32 @@ tests/
   fixtures/
 ```
 
-## 6. Immediate next actions
+## 6. End-to-end behavioral tests on simulated signals (deferred)
+
+The unit tests covered in section 2 validate **mathematical correctness** of
+windowing, indexing, and smoothing math against synthetic inputs (e.g.
+`np.arange`, zeros, step changes, impulse trains). They do **not** validate
+that detection models produce sensible onset/spread results on realistic
+input.
+
+A separate test suite is required that runs each detection model end-to-end
+on a deterministic **simulated iEEG-like signal** with a planted seizure
+event of known onset time, channel coverage, and morphology. Each model that
+claims to detect such events must produce onset detections within a
+documented tolerance of the planted onset, on the planted channels, and not
+on the unplanted channels. This is the only way to validate that the
+windowing/smoothing/onset-detection chain produces clinically/scientifically
+meaningful output, not just mathematically correct output.
+
+**This work is deferred until after the code-consolidation pass is complete**
+(redundant logic removed, common base behavior unified across model classes).
+Testing detection behavior against an unstable target is wasted effort. Once
+consolidation lands, simulated-signal tests will be added under
+`tests/integration/`, with the simulated signal stored as a deterministic
+fixture or generated from a seeded synthesis routine, and tolerance bounds
+documented per model.
+
+## 7. Immediate next actions
 
 1. Migrate test entrypoint to `pytest` as canonical runner.
 2. Add timing helper assertions for window count/index/timestamp checks.

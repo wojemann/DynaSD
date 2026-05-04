@@ -6,6 +6,8 @@ import warnings
 from sklearn.preprocessing import RobustScaler
 from sklearn.mixture import GaussianMixture
 
+from DynaSD.utils import _canonical_sample_counts
+
 class DynaSDBase:
     def __init__(self, fs, w_size, w_stride, scaler_class=RobustScaler, scaler_kwargs={}):
         self.w_size = w_size
@@ -22,16 +24,22 @@ class DynaSDBase:
         col_names = x.columns
         return pd.DataFrame(self.scaler.transform(x),columns=col_names)
     
-    # def get_win_times(self, n_samples):
-    #     win_len = int(self.w_size * self.fs)
-    #     step = int(self.w_stride * self.fs)
-    #     n_windows = (n_samples - win_len) // step + 1
-    #     return np.arange(n_windows) * self.w_stride
-
     def get_win_times(self, n_samples):
-        data_len = n_samples / self.fs
-        n_windows = np.floor((data_len - self.w_size)/self.w_stride) + 1
-        return np.arange(n_windows) * self.w_stride
+        """Realized start time (seconds) of each window for a signal of length
+        ``n_samples`` samples. See spec section 5.
+
+        Raises ``ValueError`` if input is shorter than one window.
+        """
+        win_samples, step_samples = _canonical_sample_counts(
+            self.fs, self.w_size, self.w_stride
+        )
+        if n_samples < win_samples:
+            raise ValueError(
+                f"Input length {n_samples / self.fs:.3g}s is shorter than "
+                f"window size {self.w_size:.3g}s; cannot produce any windows."
+            )
+        n_windows = (n_samples - win_samples) // step_samples + 1
+        return np.arange(n_windows) * step_samples / self.fs
     
     def get_onset_and_spread(self, sz_prob, threshold=None,
                             ret_smooth_mat=False,
@@ -39,9 +47,33 @@ class DynaSDBase:
                             rwin_size=5,  # seconds
                             rwin_req=4    # seconds
                             ):
+        # Spec section 8 validation. Each duration must be >= w_size to fit at
+        # least one window, and rwin_req <= rwin_size to keep the spread
+        # criterion satisfiable.
+        if filter_w < self.w_size:
+            raise ValueError(
+                f"filter_w ({filter_w}s) must be >= w_size ({self.w_size}s); "
+                f"cannot fit a window in less than w_size seconds."
+            )
+        if rwin_size < self.w_size:
+            raise ValueError(
+                f"rwin_size ({rwin_size}s) must be >= w_size ({self.w_size}s); "
+                f"cannot fit a window in less than w_size seconds."
+            )
+        if rwin_req < self.w_size:
+            raise ValueError(
+                f"rwin_req ({rwin_req}s) must be >= w_size ({self.w_size}s); "
+                f"cannot fit a window in less than w_size seconds."
+            )
+        if rwin_req > rwin_size:
+            raise ValueError(
+                f"rwin_req ({rwin_req}s) must be <= rwin_size ({rwin_size}s); "
+                f"cannot require more activity than the lookback span."
+            )
+
         if threshold is None:
             threshold = self.threshold
-        
+
         filter_w_idx = np.floor((filter_w - self.w_size)/self.w_stride).astype(int) + 1
 
         sz_prob = pd.DataFrame(sc.ndimage.uniform_filter1d(sz_prob, size=filter_w_idx, mode='nearest', axis=0, origin=0), columns=sz_prob.columns)
@@ -63,12 +95,12 @@ class DynaSDBase:
 
             sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
 
-            # Pad at the START with the first valid row (not zeros)
+            # Pad at the END with the last valid row (spec R1). End-padding
+            # does not affect onset detection: idxmax returns the first True
+            # row, which always lies in the unpadded region for any channel
+            # actually flagged as seizing.
             missing_rows = rwin_size_idx - 1
             if len(sz_spread_idxs_all) > 0:
-                # first_valid_row = sz_spread_idxs_all.iloc[0]
-                # padding = pd.DataFrame([first_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-                # sz_spread_idxs_all_padded = pd.concat([padding, sz_spread_idxs_all], ignore_index=True)
                 last_valid_row = sz_spread_idxs_all.iloc[-1]
                 padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
                 sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)

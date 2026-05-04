@@ -5,7 +5,7 @@ from scipy.signal import welch
 from sklearn.preprocessing import RobustScaler
 
 from .base import DynaSDBase
-from .utils import MovingWinClips
+from .utils import moving_win_clips
 
 class HFER(DynaSDBase):
     """ 
@@ -63,7 +63,7 @@ class HFER(DynaSDBase):
         return pd.DataFrame(feature_master, columns=channels)
 
     def _compute_single_channel_ER(self, channel_data):
-        windows = MovingWinClips(channel_data, self.fs, self.w_size, self.w_stride)
+        windows = moving_win_clips(channel_data, self.fs, self.w_size, self.w_stride)
         band_powers = self._compute_band_powers(windows)
         
         band_names = list(self.freq_bands.keys())

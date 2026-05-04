@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import warnings
 from tqdm import tqdm
-from .utils import num_wins, MovingWinClips
+from .utils import num_wins, moving_win_clips
 
 class MLPForecaster(nn.Module):
     """
