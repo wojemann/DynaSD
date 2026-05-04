@@ -16,17 +16,29 @@ class NDDBase(DynaSDBase):
     Extends DynaSDBase with common neural forecasting functionality.
     """
     
+    # Training-loop parameters consumed by NDDBase itself (not forwarded to DynaSDBase).
+    _TRAINING_PARAMS = (
+        'early_stopping', 'val_split', 'patience', 'tolerance', 'verbose',
+        'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
+        'grad_accumulation_steps', 'mrse',
+    )
+    # DynaSDBase accepts these in addition to (fs, w_size, w_stride).
+    _DYNASD_BASE_PARAMS = ('scaler_class', 'scaler_kwargs')
+
     def __init__(self, fs=256, w_size=1, w_stride=0.5, use_cuda=False, **kwargs):
-        # Extract training-specific parameters before passing to parent
-        training_params = ['early_stopping', 'val_split', 'patience', 'tolerance', 'verbose', 
-                          'num_workers', 'pin_memory', 'persistent_workers', 'prefetch_factor',
-                          'grad_accumulation_steps', 'mrse']
-        training_kwargs = {}
-        
-        for param in training_params:
-            if param in kwargs:
-                training_kwargs[param] = kwargs.pop(param)
-        
+        # Pull out training-loop parameters; whatever remains must be valid
+        # for DynaSDBase, otherwise raise a clear TypeError naming the
+        # offending kwargs (typo-catching for users).
+        training_kwargs = {p: kwargs.pop(p) for p in self._TRAINING_PARAMS if p in kwargs}
+        unexpected = set(kwargs) - set(self._DYNASD_BASE_PARAMS)
+        if unexpected:
+            raise TypeError(
+                f"{type(self).__name__} received unexpected keyword arguments: "
+                f"{sorted(unexpected)}. Valid kwargs are: "
+                f"training params {list(self._TRAINING_PARAMS)} "
+                f"and base params {list(self._DYNASD_BASE_PARAMS)}."
+            )
+
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, **kwargs)
         
         # Device setup
