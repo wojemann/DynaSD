@@ -29,7 +29,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP, HFER, NDD
+from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, LiRNDDA, MINDD, NDD
+from DynaSD.NDDBase import NDDBase
 from DynaSD.utils import num_wins
 
 
@@ -37,7 +38,7 @@ from DynaSD.utils import num_wins
 # Fixture: small deterministic synthetic input
 # ----------------------------------------------------------------------
 
-FS = 128
+FS = 256          # ≥ 240 Hz needed for IMPRINT's high_gamma band (70-120 Hz).
 W_SIZE = 1.0
 W_STRIDE = 0.5
 N_SECONDS = 30
@@ -66,29 +67,67 @@ def _build_hfer():
     return HFER(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
 
 
+def _build_imprint():
+    return IMPRINT(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
+
+
+# Shared lightweight config for the NN forecasters. Tiny hidden sizes and 2
+# epochs keep test wall-time small. ``sequence_length`` is the longest
+# parameter that affects fit-time; defaults across these models are 12-16.
+_NN_BASE = dict(
+    fs=FS,
+    w_size=W_SIZE,
+    w_stride=W_STRIDE,
+    sequence_length=12,
+    forecast_length=1,
+    num_epochs=2,
+    batch_size="full",
+    lr=0.01,
+    use_cuda=False,
+    verbose=False,
+)
+
+
 def _build_ndd():
-    # Deliberately tiny config so fit completes quickly under tests.
-    return NDD(
-        fs=FS,
-        w_size=W_SIZE,
-        w_stride=W_STRIDE,
-        hidden_size=4,
-        num_layers=1,
-        sequence_length=12,
-        forecast_length=1,
-        num_epochs=2,
-        batch_size="full",
-        lr=0.01,
-        use_cuda=False,
-        verbose=False,
-    )
+    return NDD(hidden_size=4, num_layers=1, **_NN_BASE)
+
+
+def _build_gin():
+    return GIN(hidden_size=4, num_layers=1, num_stacks=1, **_NN_BASE)
+
+
+def _build_lindda():
+    # LiNDDA's _boundary table only covers sequence_length ∈ {1..7}; using a
+    # different value raises KeyError in __init__. Override the shared
+    # _NN_BASE config for this model.
+    return LiNDDA(**{**_NN_BASE, "sequence_length": 4, "forecast_length": 4})
+
+
+def _build_lirndda():
+    return LiRNDDA(hidden_size=4, num_layers=1, num_stacks=1, **_NN_BASE)
+
+
+def _build_mindd():
+    return MINDD(hidden_sizes=[8, 4], dropout=0.0, use_batch_norm=False, **_NN_BASE)
 
 
 MODELS = [
     pytest.param(_build_absslp, id="ABSSLP"),
     pytest.param(_build_hfer, id="HFER"),
+    pytest.param(_build_imprint, id="IMPRINT"),
     pytest.param(_build_ndd, id="NDD"),
+    pytest.param(_build_gin, id="GIN"),
+    pytest.param(_build_lindda, id="LiNDDA"),
+    pytest.param(_build_lirndda, id="LiRNDDA"),
+    pytest.param(_build_mindd, id="MINDD"),
 ]
+
+# ONCET and WVNT are intentionally excluded: both require a ``model_path``
+# pointing to a pretrained checkpoint, which is not available in CI. The
+# unified forward(X) → DataFrame contract is documented to apply equally
+# to those two; the per-model integration suite (deferred until simulated-
+# signal fixtures land — see docs/testing_strategy.md § 6) will exercise
+# them with real checkpoints.
 
 
 # ----------------------------------------------------------------------
@@ -166,3 +205,90 @@ def test_call_equals_forward(build, synthetic_signal):
         out_forward = model.forward(synthetic_signal)
         out_call = model(synthetic_signal)
     pd.testing.assert_frame_equal(out_forward, out_call)
+
+
+# ----------------------------------------------------------------------
+# NDDBase-specific tests (kwarg validation, training-param absorption)
+# ----------------------------------------------------------------------
+
+def test_nddbase_rejects_unknown_kwargs():
+    """An unexpected kwarg must raise a clear TypeError naming the offender,
+    not silently propagate to DynaSDBase.
+
+    Regression test for the pre-Phase-B bug where typos like ``train_win``
+    or ``num_chunnels=...`` would surface as a bewildering
+    ``DynaSDBase.__init__() got an unexpected keyword argument`` error.
+    """
+    with pytest.raises(TypeError, match="unexpected keyword arguments"):
+        NDD(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, totally_made_up_kwarg=42)
+
+
+def test_nddbase_error_message_names_offender():
+    """The TypeError mentions the offending kwarg name verbatim."""
+    try:
+        NDD(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, my_typoed_param=1)
+    except TypeError as e:
+        assert "my_typoed_param" in str(e)
+    else:
+        pytest.fail("Expected TypeError naming the offender, none raised.")
+
+
+def test_nddbase_error_message_names_actual_class():
+    """The TypeError attributes the failure to the user-facing class
+    (NDD, GIN, ...), not to NDDBase or DynaSDBase. This is what makes the
+    error actionable for users."""
+    try:
+        GIN(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, hidden_size=4,
+            num_layers=1, num_stacks=1, foo=42)
+    except TypeError as e:
+        assert "GIN" in str(e), f"Error should attribute failure to GIN, got: {e}"
+    else:
+        pytest.fail("Expected TypeError, none raised.")
+
+
+def test_nddbase_absorbs_known_training_params():
+    """Training-loop parameters (early_stopping, val_split, etc.) are
+    accepted as **kwargs and stored on the instance."""
+    model = NDD(
+        fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
+        hidden_size=4, num_layers=1,
+        sequence_length=12, forecast_length=1,
+        num_epochs=2, batch_size="full", lr=0.01,
+        use_cuda=False, verbose=False,
+        early_stopping=True, val_split=0.3, patience=7, tolerance=1e-3,
+    )
+    assert model.early_stopping is True
+    assert model.val_split == 0.3
+    assert model.patience == 7
+    assert model.tolerance == 1e-3
+
+
+def test_nddbase_passes_scaler_kwargs_to_base():
+    """Base-class kwargs (scaler_class, scaler_kwargs) thread through
+    NDDBase to DynaSDBase without being mistaken for training params."""
+    from sklearn.preprocessing import StandardScaler
+
+    model = NDD(
+        fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
+        hidden_size=4, num_layers=1,
+        sequence_length=12, forecast_length=1,
+        num_epochs=2, batch_size="full", lr=0.01,
+        use_cuda=False, verbose=False,
+        scaler_class=StandardScaler,
+    )
+    assert model.scaler_class is StandardScaler
+
+
+def test_nddbase_is_abstract_for_forward():
+    """Instantiating NDDBase directly and calling forward() without a
+    fitted subclass-specific model must not silently return junk.
+    NDDBase requires sequence_length and a torch model to forward; without
+    those it should error rather than return garbage."""
+    base = NDDBase(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, use_cuda=False)
+    assert base.is_fitted is False
+    rng = np.random.RandomState(0)
+    x = pd.DataFrame(
+        rng.normal(size=(FS * 5, 2)), columns=["ch0", "ch1"]
+    )
+    with pytest.raises((AssertionError, AttributeError, TypeError)):
+        base.forward(x)

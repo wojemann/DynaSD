@@ -210,7 +210,9 @@ class IMPRINT(DynaSDBase):
                 'median': ref_med,
                 'scaled_mad': ref_smad
             }
-        
+
+        # Standardize fitted-state convention across the package.
+        self.is_fitted = True
         return self
 
     def forward(self, X):
@@ -218,9 +220,7 @@ class IMPRINT(DynaSDBase):
         Detect seizure onset in ictal data using the fitted preictal baseline.
         """
 
-        # Check that model has been fitted
-        if not hasattr(self, 'clean_reference_features'):
-            raise ValueError("Model must be fitted before calling forward()")
+        assert self.is_fitted, "Must fit model before running inference"
         
         # Start analysis ictal buffer seconds before seizure onset
         analysis_start_time = self.onset_buffer - self.ictal_buffer
