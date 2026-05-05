@@ -342,6 +342,62 @@ def test_s7_onset_seconds_equal_index_times_step_over_fs():
     assert onset_idx * step_samples / fs == onset_idx * 1.0
 
 
+def test_s7_time_indexed_sz_prob_returns_onsets_in_seconds():
+    """When ``sz_prob`` is fed in time-indexed (the standard Phase-F path
+    produced by ``model.forward(X)``), ``idxmax`` returns onset times in
+    seconds directly — no manual window-index → seconds conversion needed.
+
+    Uses ``w_stride=2.0`` so that the time labels and positional indices
+    are numerically distinct (positional 19 vs. time 38.0); without that
+    distinction the test could be satisfied trivially by either contract.
+    """
+    base = _make_base(fs=1, w_size=1.0, w_stride=2.0)
+    n_rows = 51
+    data = np.zeros((n_rows, 1))
+    k = 20  # positional row of sustained activity onset
+    data[k : k + 10, 0] = 1.0
+
+    # Choose n_samples so that num_wins(n_samples, fs, w_size, w_stride)
+    # equals n_rows, then attach the matching time index.
+    n_samples = (n_rows - 1) * 2 + 1  # = 101
+    time_index = base.get_win_index(n_samples)
+    sz_prob = pd.DataFrame(data, columns=["ch0"], index=time_index)
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0,    # filter_w_idx == 1 (no smoothing)
+        rwin_size=5.0,   # rwin_size_idx == 3
+        rwin_req=4.0,    # rwin_req_idx == 2
+    )
+    # Spread shift is rwin_size_idx - rwin_req_idx = 1 window (= 2.0s).
+    # Expected onset position: k - 1 = 19; in seconds: 19 * 2 = 38.0.
+    onset = sz_idxs["ch0"].iloc[0]
+    assert onset == 38.0
+
+
+def test_s7_positional_sz_prob_returns_window_indices():
+    """When ``sz_prob`` has the default :class:`RangeIndex` (legacy /
+    manually constructed input), ``idxmax`` returns onset window indices
+    as integers — backward-compatible with pre-Phase-F callers."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=2.0)
+    n_rows = 51
+    data = np.zeros((n_rows, 1))
+    k = 20
+    data[k : k + 10, 0] = 1.0
+    sz_prob = pd.DataFrame(data, columns=["ch0"])  # default RangeIndex(0..50)
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0, rwin_size=5.0, rwin_req=4.0,
+    )
+    onset = sz_idxs["ch0"].iloc[0]
+    # Same fixture as the time-indexed test, but onset is reported in
+    # window-index units instead: k - 1 = 19. The numerical distinction
+    # from the time-indexed test (38.0 vs 19) is what makes both tests
+    # meaningful — preserving the input-index convention is the contract.
+    assert onset == 19
+
+
 # ----------------------------------------------------------------------
 # Section 7.4: bias from forward-looking convolution
 # ----------------------------------------------------------------------
