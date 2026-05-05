@@ -1,6 +1,6 @@
 # Release Prep Handoff
 
-Date: 2026-05-05
+Date: 2026-05-05 (updated after Phase F audit follow-ups)
 Active branch: `release-prep/cleanup-packaging`
 Original wo_dev tip preserved at git tag: `submission` (commit `897c3d5`)
 
@@ -28,7 +28,7 @@ conda run -n stim-env python -m pytest tests/test_windowing_smoothing_spec.py \
                                        tests/test_absslp_spec.py \
                                        tests/test_absslp.py \
                                        tests/test_ndd.py
-# Expected: 121 passed
+# Expected: 127 passed
 ```
 
 ## What's been done since the `submission` tag
@@ -48,6 +48,9 @@ conda run -n stim-env python -m pytest tests/test_windowing_smoothing_spec.py \
 | `8cd0f69` | E++ | GIN and LiNDDA reject unsupported `sequence_length` with ValueError naming the supported set (instead of bare KeyError mid-construction) |
 | `ba1efea` | A+ | Archive LiRNDDA and MINDD (not in published paper, no decision boundaries); drop from `__all__` |
 | `806189e` | F | Time-indexed DataFrame outputs across all detectors; `forward(X)` row index is now realized window-start times in seconds named `t_sec`; `get_onset_and_spread` preserves input index through pipeline so onset times come out in seconds directly |
+| `a2dc277` | F.1 | Audit follow-up: align NDDBase `_aggregate_sequences_to_windows_mse` window grid with `get_win_times`; remove silent length-mismatch guards in `forward()`. Drops at most `(w_size - w_stride)` seconds of trailing sequences for between-boundary inputs; no clinical impact. |
+| `6e41b8a` | F.3 | Audit follow-up: pin down the index-preservation contract for `get_onset_and_spread` with two paired tests (time-indexed vs positional `sz_prob`) using `w_stride=2.0` so the two contracts give numerically distinct values (38.0 vs 19). |
+| `ed5338c` | F.4 | Audit follow-up: remove IMPRINT input cropping; drop `onset_buffer` / `offset_buffer` / `ictal_buffer` parameters from `__init__`. Aligns IMPRINT's time-index frame of reference with every other detector. No behavior change under default params (the crop was already a no-op). |
 
 ## Current package surface
 
@@ -116,12 +119,14 @@ Every detector in `__all__` satisfies the unified inference contract:
 
 ## Test suite
 
-121 deterministic tests passing across:
-- `tests/test_windowing_smoothing_spec.py` (55) — windowing, smoothing,
-  onset detection math validated against the spec.
-- `tests/test_model_api_contract.py` (62) — 8 contract checks × 6 models
+127 deterministic tests passing across:
+- `tests/test_windowing_smoothing_spec.py` (57) — windowing, smoothing,
+  onset detection math validated against the spec, including the
+  Phase F.3 paired tests for time-indexed vs. positional `sz_prob`.
+- `tests/test_model_api_contract.py` (66) — 8 contract checks × 6 models
   (ABSSLP, HFER, IMPRINT, NDD, GIN, LiNDDA) + 6 NDDBase kwarg-validation
-  tests + 2 unsupported-sequence_length ValueError tests.
+  tests + 2 unsupported-sequence_length ValueError tests + 4 Phase F.1
+  regression tests probing length agreement at between-boundary inputs.
 - `tests/test_absslp_spec.py` (4) — ABSSLP non-negativity, amplitude
   monotonicity, determinism, zero-features for level-aligned inputs.
 - `tests/test_absslp.py` (3) — pre-existing ABSSLP integration test.
@@ -151,11 +156,33 @@ Pre-existing failures not addressed:
 
 ### Tier 2 — bigger but still scoped
 
-5. **NDDBase deeper unit tests** beyond kwarg validation: sequence
-   preparation correctness, sliding-window logic, MSE aggregation.
-6. **Extend per-model contract test to ONCET and WVNT** once a small
-   pretrained-checkpoint fixture is available (or stub `_load_model`
-   so the test can run without real weights).
+5. **Phase G — NDDBase deeper unit tests.** Currently NDDBase is only
+   covered by (a) kwarg-validation tests and (b) the F.1 length-agreement
+   regression tests. The internals that produce the per-window features
+   are not directly unit-tested. Concrete sub-targets for a new
+   `tests/test_nddbase_spec.py` file modeled on `tests/test_absslp_spec.py`:
+
+   - `_prepare_multistep_sequences_vectorized` ([NDDBase.py:135-304](DynaSD/NDDBase.py#L135-L304)):
+     closed-form assertions on `n_sequences`, `input_data` shape,
+     `target_data` shape, and `seq_positions` content for representative
+     `(sequence_length, forecast_length, stride)` combinations,
+     including the n-samples-vs-total_seq_length boundary case.
+   - `_aggregate_sequences_to_windows_mse` ([NDDBase.py:638-703](DynaSD/NDDBase.py#L638-L703)):
+     feed a deterministic synthetic `seq_results` dict and assert the
+     window-MSE values equal a hand-computed expected. The Haoer-overlap
+     window-assignment criterion at lines 688-689 is subtle (uses
+     `>=` for start, strict `<` for end) and worth pinning down.
+   - **Sequence cache** ([NDDBase.py:65-95, 158-225](DynaSD/NDDBase.py#L65-L225)):
+     fit twice with same data, assert no recomputation; mutate input,
+     assert recomputation; mutate sequence_length / forecast_length,
+     assert cache miss.
+
+   Estimated 6-10 tests in a single focused commit. No code changes
+   anticipated — purely test additions.
+
+6. **Phase H — Extend per-model contract test to ONCET and WVNT** once a
+   small pretrained-checkpoint fixture is available (or stub
+   `_load_model` so the test can run without real weights).
 
 ### Tier 3 — bigger commitment
 
