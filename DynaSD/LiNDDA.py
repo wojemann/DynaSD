@@ -199,19 +199,25 @@ class LiNDDA(NDDBase):
         self.lr = lr
         self.closeform = closeform
         self.train = True
-        # Feature for threshold aggregation
-        # boundary_dict = {3:,4:,5:,}
 
+        # Pretrained per-channel decision boundary lookup. Calibrated for
+        # specific sequence lengths only; reject unsupported values with a
+        # clear error rather than KeyError'ing during construction.
         boundary_dict = {
-            1:1.007301904,
-            2:0.999779592,
-            3:1.110660322,
-            4:1.19550413,
-            5:1.270567546,
-            6:1.40638846,
-            7:1.456485738,
+            1: 1.007301904,
+            2: 0.999779592,
+            3: 1.110660322,
+            4: 1.19550413,
+            5: 1.270567546,
+            6: 1.40638846,
+            7: 1.456485738,
         }
-
+        if self.sequence_length not in boundary_dict:
+            raise ValueError(
+                f"LiNDDA sequence_length={self.sequence_length} is not supported. "
+                f"Pretrained boundaries are available only for "
+                f"sequence_length ∈ {sorted(boundary_dict)}."
+            )
         self._boundary = boundary_dict[self.sequence_length]
 
     def fit(self, X):

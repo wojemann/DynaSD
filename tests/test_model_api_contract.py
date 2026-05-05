@@ -279,6 +279,26 @@ def test_nddbase_passes_scaler_kwargs_to_base():
     assert model.scaler_class is StandardScaler
 
 
+def test_gin_unsupported_sequence_length_raises():
+    """GIN's pretrained _boundary table is sparse; unsupported
+    sequence_length values must raise ValueError naming the supported
+    set, not KeyError mid-construction."""
+    with pytest.raises(ValueError, match="sequence_length"):
+        GIN(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
+            hidden_size=4, num_layers=1, num_stacks=1,
+            sequence_length=99, forecast_length=1,
+            num_epochs=1, use_cuda=False, verbose=False)
+
+
+def test_lindda_unsupported_sequence_length_raises():
+    """LiNDDA's pretrained _boundary table covers only sequence_length
+    ∈ {1..7}; unsupported values must raise ValueError, not KeyError."""
+    with pytest.raises(ValueError, match="sequence_length"):
+        LiNDDA(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
+               sequence_length=99, forecast_length=1,
+               num_epochs=1, use_cuda=False, verbose=False)
+
+
 def test_nddbase_is_abstract_for_forward():
     """Instantiating NDDBase directly and calling forward() without a
     fitted subclass-specific model must not silently return junk.

@@ -136,12 +136,20 @@ class GIN(NDDBase):
         self.lr = lr
         self.residual_init = residual_init
 
+        # Pretrained per-channel decision boundary lookup. Calibrated for
+        # specific sequence lengths only; reject unsupported values with a
+        # clear error rather than KeyError'ing during construction.
         boundary_dict = {
             4: 0.968102573,
             8: 0.965371199,
             12: 0.963494202,
         }
-
+        if self.sequence_length not in boundary_dict:
+            raise ValueError(
+                f"GIN sequence_length={self.sequence_length} is not supported. "
+                f"Pretrained boundaries are available only for "
+                f"sequence_length ∈ {sorted(boundary_dict)}."
+            )
         self._boundary = boundary_dict[self.sequence_length]
     
     def _prepare_sequences(self, data, ret_positions=False):
