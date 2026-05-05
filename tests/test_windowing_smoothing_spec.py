@@ -455,6 +455,87 @@ def test_s74_late_seizure_outside_lookahead_not_flagged():
     assert pd.isna(sz_idxs["ch0"].iloc[0])
 
 
+# Bias formula under non-trivial smoothing. A centered ``uniform_filter1d``
+# applied to a step from 0 to 1 does NOT shift the threshold-``0.5``
+# crossing — by symmetry the smoothed value crosses ``0.5`` at the
+# planted step itself for odd ``filter_w_idx``, and exactly one row
+# later for even ``filter_w_idx`` (the strict ``>`` comparison breaks
+# the half-and-half tie on the right side). The full bias for
+# threshold-``0.5`` step inputs is:
+#     total_shift_windows = filter_offset - (rwin_size_idx - rwin_req_idx)
+#     where filter_offset = +1 if filter_w_idx even else 0
+# These tests pin that formula across filter parities and a couple of
+# spread configurations. Spec § 7.4 / R3 documents the same.
+
+def _filter_offset(filter_w_idx):
+    """Smoothing shift in windows for a threshold-0.5 step input.
+
+    +1 for even ``filter_w_idx`` because the strict ``>`` comparison
+    rules out the exact-half tie on the right side of the centered
+    window; 0 otherwise.
+    """
+    return 1 if filter_w_idx % 2 == 0 else 0
+
+
+@pytest.mark.parametrize("filter_w,rwin_size,rwin_req,planted_idx", [
+    # filter_w_idx odd (no parity correction)
+    (11.0, 5.0, 4.0, 50),
+    (11.0, 5.0, 5.0, 50),  # rwin_req == rwin_size → no spread shift
+    (11.0, 7.0, 4.0, 50),  # larger spread shift
+    # filter_w_idx even (+1 parity correction)
+    (10.0, 5.0, 4.0, 50),
+    (10.0, 5.0, 5.0, 50),
+    # filter_w_idx == 1 (no smoothing) — sanity baseline
+    (1.0, 5.0, 4.0, 40),
+])
+def test_s74_combined_bias_step_threshold_0_5(filter_w, rwin_size, rwin_req, planted_idx):
+    """For a clean step at row ``planted_idx`` and threshold = 0.5, the
+    detected onset matches the corrected R3 formula exactly:
+
+        detected = planted + filter_offset - (rwin_size_idx - rwin_req_idx)
+    """
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    data = np.zeros((n, 1))
+    data[planted_idx:, 0] = 1.0  # step from 0 to 1 at planted_idx
+    sz_prob = pd.DataFrame(data, columns=["ch0"])
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=filter_w, rwin_size=rwin_size, rwin_req=rwin_req,
+    )
+    filter_w_idx = _seconds_to_idx(filter_w, 1.0, 1.0)
+    rwin_size_idx = _seconds_to_idx(rwin_size, 1.0, 1.0)
+    rwin_req_idx = _seconds_to_idx(rwin_req, 1.0, 1.0)
+
+    expected = planted_idx + _filter_offset(filter_w_idx) - (rwin_size_idx - rwin_req_idx)
+    onset = sz_idxs["ch0"].iloc[0]
+    assert onset == expected, (
+        f"filter_w={filter_w} (idx={filter_w_idx}, parity_offset="
+        f"{_filter_offset(filter_w_idx)}), rwin_size={rwin_size} "
+        f"(idx={rwin_size_idx}), rwin_req={rwin_req} "
+        f"(idx={rwin_req_idx}): expected onset {expected}, got {onset}"
+    )
+
+
+def test_s74_smoothing_step_at_midpoint_threshold_default_params_zero_net_shift():
+    """Worked example from spec § 7.4: with default parameters
+    (``filter_w=10s``, ``rwin_size=5s``, ``rwin_req=4s``) at threshold
+    ``0.5``, a step at row ``k=50`` produces detected onset at row 50
+    exactly — the +1 even-parity smoothing offset is canceled by the
+    -1 spread shift."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    k = 50
+    data = np.zeros((n, 1))
+    data[k:, 0] = 1.0
+    sz_prob = pd.DataFrame(data, columns=["ch0"])
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=10.0, rwin_size=5.0, rwin_req=4.0,
+    )
+    assert sz_idxs["ch0"].iloc[0] == k
+
+
 # ----------------------------------------------------------------------
 # Section 8: validation
 # ----------------------------------------------------------------------

@@ -231,30 +231,48 @@ the caller multiplies by ``step_samples / fs`` if seconds are wanted.
 
 ### 7.4 Reported onset is biased earlier than first raw threshold crossing
 
-The pipeline introduces two earlier-shifts versus first individual
-above-threshold sample:
+The pipeline introduces two shifts versus the first individual
+above-threshold raw sample:
 
-1. **Smoothing shift** (S2): a sharp upward step at row `k` in raw `sz_prob`
-   crosses threshold in the smoothed signal at approximately
-   `k - filter_w_idx / 2` due to centered moving average.
+1. **Smoothing shift** (S2): a centered moving average around a sharp
+   upward step does not move the threshold-midpoint crossing. For a step
+   from `0` to `1` at row `k` filtered with `uniform_filter1d(size=N,
+   origin=0)` and tested against threshold `0.5`:
+   - **Odd `N`** (symmetric window): the smoothed signal first strictly
+     exceeds `0.5` at row `k` — no shift.
+   - **Even `N`** (right-biased window): the smoothed signal first strictly
+     exceeds `0.5` at row `k + 1` — a +1 row *later* than raw, owing to
+     the strict `>` comparison and the asymmetric ceiling at exactly half.
+
+   For thresholds far from the ramp midpoint, the shift is roughly
+   ``±filter_w_idx/2`` — the smoothed value clears low thresholds earlier
+   than raw and high thresholds later. In practice the spec test suite
+   pins behavior at threshold ``0.5`` because that's where the post-
+   filter signal carries the most information about onset timing; tune
+   threshold close to the per-detector smoothed midpoint to keep
+   absolute-time interpretation clean.
+
 2. **Spread shift** (S5): for contiguous above-threshold activity beginning
    at row `k` (post-smoothing), the earliest True row in `sz_spread` is
-   approximately `k - (rwin_size_idx - rwin_req_idx)`.
+   exactly `k - (rwin_size_idx - rwin_req_idx)`.
 
-Total bias for default parameters
-(`w_size=1, w_stride=1, filter_w=10, rwin_size=5, rwin_req=4`):
+Total bias for a clean step at threshold `0.5`:
 ```
-total_shift_sec ≈ (filter_w_idx / 2 + (rwin_size_idx - rwin_req_idx)) * w_stride
-                ≈ (5 + 1) * 1 = 6 seconds earlier
+total_shift_windows = filter_offset - (rwin_size_idx - rwin_req_idx)
+                      where filter_offset = +1 if filter_w_idx even else 0
+total_shift_sec     = total_shift_windows * w_stride
 ```
 
-This is an intentional property of the pipeline, not a bug. Downstream
-consumers must apply their own offset when interpreting reported onset times
-in absolute seconds.
+Worked example (`w_size=1, w_stride=1, filter_w=10, rwin_size=5, rwin_req=4`,
+threshold `0.5`, planted step at row `k=50`):
+- `filter_w_idx=10` → even → `filter_offset = +1`
+- `rwin_size_idx=5`, `rwin_req_idx=4` → spread shift = 1 row earlier
+- Net: detected at row `50 + 1 - 1 = 50` — same as the planted step.
 
-End-padding does not affect onset detection: `idxmax` returns the first True
-row, and any True row inside the padded region implies the corresponding
-unpadded channel was already detected from a valid row earlier.
+End-padding does not affect onset detection: `idxmax` returns the first
+True row, and any True row inside the padded region implies the
+corresponding unpadded channel was already detected from a valid row
+earlier.
 
 ---
 
@@ -454,9 +472,11 @@ most-anticipatory plausible answer. The package is explicitly trading
 causality for earliest-detection semantics, and consumers must understand
 this when interpreting onset times in absolute seconds.
 
-Combined with the forward-looking smoothing and spread-detection biases
-documented in R3, reported onset times are **substantially earlier** than the
-first individual above-threshold sample. This is a deliberate property of the
+Combined with the spread-detection forward-looking bias documented in
+R3, reported onset times sit a small number of windows away from the
+first individual above-threshold sample (typically zero net shift when
+threshold is chosen at the smoothed-step midpoint, and a few windows of
+forward-looking shift otherwise). This is a deliberate property of the
 pipeline, not a bug.
 
 ### R3. Full window-index → absolute-seconds chain
@@ -466,26 +486,39 @@ behavior must follow. Sections 7 and 9 of the contract above codify it. Tests
 will validate each link of this chain independently.
 
 **Total bias of `onset_time_sec` vs. true first above-threshold sample.**
-The reported onset time is **earlier** than the first sample where raw
-`sz_prob` exceeds `threshold`, by approximately:
+For a clean step input at threshold `0.5` (the canonical case captured by
+the spec test suite), the reported onset is shifted versus the planted step
+by:
 
 ```
-total_shift_sec ≈ (filter_w_idx / 2 + (rwin_size_idx - rwin_req_idx)) * w_stride
+total_shift_windows = filter_offset - (rwin_size_idx - rwin_req_idx)
+                      where filter_offset = +1 if filter_w_idx even else 0
+total_shift_sec     = total_shift_windows * w_stride
 ```
 
-with default parameters (`w_size = 1s`, `w_stride = 1s`, `filter_w = 10s`,
-`rwin_size = 5s`, `rwin_req = 4s`) this evaluates to roughly:
-- smoothing shift: ~5 windows = ~5 seconds
-- spread shift: 1 window = ~1 second
-- **total: ~6 seconds earlier than first raw threshold crossing**
+A centered moving average around a step does **not** move the
+threshold-midpoint crossing — by symmetry the smoothed value crosses
+`0.5` at the planted step itself for odd `filter_w_idx`, and one row
+later for even `filter_w_idx` (because the strict ``>`` comparison
+breaks the half-and-half tie on the right side). For thresholds far from
+the smoothed-step midpoint, the smoothing shift grows toward
+``±filter_w_idx/2``; tune threshold close to the per-detector smoothed
+midpoint to keep the relationship between planted and detected onset
+clean.
+
+With default parameters (`w_size = 1s`, `w_stride = 1s`,
+`filter_w = 10s`, `rwin_size = 5s`, `rwin_req = 4s`, threshold `0.5`):
+- `filter_w_idx = 10` (even) → `filter_offset = +1`
+- spread shift = `rwin_size_idx − rwin_req_idx` = 1 window earlier
+- **net total = +1 − 1 = 0 windows: detected onset == planted onset**
 
 Plus the windowing convention itself (R2) means each window's timestamp
 already refers to neural activity in the following `w_size` seconds.
 
-This bias is **intentional and forward-looking**, not a bug. Downstream
-clinical/research consumers must apply their own offset if they need the
-timestamp of the first individual above-threshold sample rather than the
-forward-looking onset.
+The spread shift is **intentional and forward-looking**. Downstream
+clinical/research consumers must apply their own offset if they need
+the timestamp of the first individual above-threshold sample rather
+than the forward-looking onset.
 
 ### R4. Input shorter than one window: raise `ValueError`
 
