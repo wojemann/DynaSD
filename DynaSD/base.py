@@ -312,9 +312,9 @@ class DynaSDBase:
 
         Notes
         -----
-        Some neural detectors (``NDD``, ``GIN``, ``LiNDDA``, ``LiRNDDA``,
-        ``MINDD``) additionally expose a ``predict(X)`` method that returns
-        the **forecasted time series** rather than per-window features —
+        Some neural detectors (``NDD``, ``GIN``, ``LiNDDA``) additionally
+        expose a ``predict(X)`` method that returns the **forecasted time
+        series** rather than per-window features —
         a different operation used for forecast diagnostics, not for
         seizure detection. Use ``forward(X)`` for inference.
         """

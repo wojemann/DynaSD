@@ -29,7 +29,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, LiRNDDA, MINDD, NDD
+from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, NDD
 from DynaSD.NDDBase import NDDBase
 from DynaSD.utils import num_wins
 
@@ -103,14 +103,6 @@ def _build_lindda():
     return LiNDDA(**{**_NN_BASE, "sequence_length": 4, "forecast_length": 4})
 
 
-def _build_lirndda():
-    return LiRNDDA(hidden_size=4, num_layers=1, num_stacks=1, **_NN_BASE)
-
-
-def _build_mindd():
-    return MINDD(hidden_sizes=[8, 4], dropout=0.0, use_batch_norm=False, **_NN_BASE)
-
-
 MODELS = [
     pytest.param(_build_absslp, id="ABSSLP"),
     pytest.param(_build_hfer, id="HFER"),
@@ -118,8 +110,6 @@ MODELS = [
     pytest.param(_build_ndd, id="NDD"),
     pytest.param(_build_gin, id="GIN"),
     pytest.param(_build_lindda, id="LiNDDA"),
-    pytest.param(_build_lirndda, id="LiRNDDA"),
-    pytest.param(_build_mindd, id="MINDD"),
 ]
 
 # ONCET and WVNT are intentionally excluded: both require a ``model_path``
