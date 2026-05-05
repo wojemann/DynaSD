@@ -277,15 +277,49 @@ class DynaSDBase:
         else:
             raise ValueError(f"Unknown method '{method}'. Choose from: 'pretrained', 'automedian', 'automean', 'mean', 'meanover', 'medianover'")
     
-    def fit(self,X):
-        print("Must define a fit function")
-        return None
+    def fit(self, X):
+        """Fit the detector to ``X``. Subclasses must override.
 
-    def forward(self,X):
-        print("Must define a forward function")
-        assert self.is_fitted, "Must fit model before running inference"
-        return None
-    
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG signal of shape ``(n_samples, n_channels)`` with
+            channel names as column labels.
+        """
+        raise NotImplementedError("Subclasses of DynaSDBase must override fit().")
+
+    def forward(self, X):
+        """Run inference and return per-window features.
+
+        This is the **unified inference entry point** across every detector
+        class in DynaSD. ``model(X)`` delegates to ``model.forward(X)`` via
+        :meth:`__call__`.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG signal of shape ``(n_samples, n_channels)`` with
+            channel names as column labels.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window features of shape ``(n_windows, n_channels)`` with
+            the same channel names as ``X.columns``. The row index is
+            positional (``0..n_windows-1``); realized window start times
+            in seconds are obtained from a separate
+            :meth:`get_win_times` call on a signal of length ``len(X)``.
+
+        Notes
+        -----
+        Some neural detectors (``NDD``, ``GIN``, ``LiNDDA``, ``LiRNDDA``,
+        ``MINDD``) additionally expose a ``predict(X)`` method that returns
+        the **forecasted time series** rather than per-window features —
+        a different operation used for forecast diagnostics, not for
+        seizure detection. Use ``forward(X)`` for inference.
+        """
+        raise NotImplementedError("Subclasses of DynaSDBase must override forward().")
+
     def __call__(self, *args):
         return self.forward(*args)
     

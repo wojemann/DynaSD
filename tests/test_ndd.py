@@ -88,26 +88,19 @@ class TestNDD(unittest.TestCase):
         # Check that column names match
         self.assertEqual(list(self.baseline_data.columns), list(self.seizure_data.columns))
         
-    @unittest.expectedFailure
     def test_comprehensive_model_validation(self):
-        """Test model and generate comprehensive visualization.
-
-        Currently expected-fail: NDD.predict() returns a numpy ndarray, but
-        the test (and the package's stated direction) requires a DataFrame
-        with channel-named columns. This is the API-unification issue
-        tracked as Phase D in the release-prep plan; once forward()/predict()
-        are unified across model classes to always return DataFrames, this
-        test should pass and the @expectedFailure decorator should be removed.
-        """
+        """Test model and generate comprehensive visualization."""
         # Suppress training output for cleaner test results
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
-            # Fit model and get predictions. Phase D will unify the inference
-            # entry point across model classes; for now NN models use predict().
+            # forward(X) is the unified inference entry point across all
+            # DynaSD models — returns a (n_windows, n_channels) DataFrame.
+            # predict() on NN models is a separate forecasting method that
+            # returns the predicted time series, not seizure features.
             self.model.fit(self.baseline_data)
-            baseline_features = self.model.predict(self.baseline_data)
-            seizure_features = self.model.predict(self.seizure_data)
+            baseline_features = self.model.forward(self.baseline_data)
+            seizure_features = self.model.forward(self.seizure_data)
         
         # Validation checks for standard format (windows x channels)
         self.assertIsInstance(baseline_features, pd.DataFrame)
