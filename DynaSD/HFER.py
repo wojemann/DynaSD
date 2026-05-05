@@ -44,8 +44,10 @@ class HFER(DynaSDBase):
         self.scaler = RobustScaler().fit(x)
         nx = self.scaler.transform(x)
         self.inter = pd.DataFrame(nx, columns=x.columns)
+        self.is_fitted = True
 
     def forward(self, X):
+        assert self.is_fitted, "Must fit model before running inference"
         channels = X.columns.to_list()
         
         all_features = []
