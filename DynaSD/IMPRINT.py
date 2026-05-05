@@ -242,7 +242,15 @@ class IMPRINT(DynaSDBase):
         # Calculate MAD scores
         mahal_mad = self.ictal_mad_score(ictal_features)
 
-        feature_df = pd.DataFrame(mahal_mad.T, columns = X.columns)
+        # Index is realized window-start times in seconds (spec section 5),
+        # measured relative to the start of the analyzed (post-buffer-slice)
+        # signal — i.e. seconds after analysis_start_time, not seconds
+        # since the original recording's t=0.
+        feature_df = pd.DataFrame(
+            mahal_mad.T,
+            columns=X.columns,
+            index=self.get_win_index(len(X)),
+        )
 
         return feature_df
     

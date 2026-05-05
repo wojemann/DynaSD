@@ -186,6 +186,20 @@ def test_forward_columns_match_input(build, synthetic_signal):
 
 
 @pytest.mark.parametrize("build", MODELS)
+def test_forward_index_is_realized_window_times(build, synthetic_signal):
+    """forward(X)'s row index is the realized window-start times in seconds
+    (spec section 5, Phase F). Equal to ``model.get_win_index(len(X))``."""
+    model = build()
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model.fit(synthetic_signal)
+        out = model.forward(synthetic_signal)
+    expected_index = model.get_win_index(len(synthetic_signal))
+    assert out.index.name == "t_sec"
+    np.testing.assert_allclose(out.index.values, expected_index.values, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("build", MODELS)
 def test_call_equals_forward(build, synthetic_signal):
     """model(X) is exactly model.forward(X)."""
     model = build()

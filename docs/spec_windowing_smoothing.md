@@ -92,14 +92,26 @@ Window `i` is timestamped by its **start time** (R2):
 t_i = i * step_samples / fs                # seconds
 ```
 
-`DynaSDBase.get_win_times(n_samples)` returns
-`np.arange(n_windows) * step_samples / fs`.
-
 This is the **realized** start time corresponding to the actual sample
 positions used by `MovingWinClips`. For integer `w_size * fs` and
 `w_stride * fs`, `t_i == i * w_stride` exactly. For non-integer products,
 realized timestamps may drift by at most `0.5 / fs` seconds per window from
 the requested stride; the realized value is reported, never the requested one.
+
+`DynaSDBase` exposes window timestamps via two helpers:
+
+- ``get_win_times(n_samples) → np.ndarray`` — bare 1D array of realized
+  window-start times in seconds.
+- ``get_win_index(n_samples) → pandas.Index`` (named ``t_sec``) —
+  the same values wrapped as a labeled :class:`pandas.Index`, suitable for
+  use as the row index of inference DataFrames.
+
+**Inference DataFrames are time-indexed (Phase F).** Every detector's
+``forward(X)`` returns a DataFrame whose row index is
+``self.get_win_index(len(X))`` — i.e. the realized window-start times in
+seconds with index name ``"t_sec"``. Concretely, ``out.iloc[i]`` is the
+features at the ``i``-th window and ``out.loc[5.0]`` is the features at
+the window starting 5.0 seconds into the input.
 
 The choice of start (vs. center vs. end) is **acausal** and deliberate: it
 gives the earliest moment from which a window's data could detect activity,
@@ -144,8 +156,10 @@ seconds-of-activity semantics should set `w_size = w_stride`.
 ### 7.1 Inputs
 
 - `sz_prob`: `pandas.DataFrame` of shape `(n_windows, n_channels)`. Each row
-  is the per-channel seizure probability for one window. Index is positional
-  (0..n_windows-1).
+  is the per-channel seizure probability for one window. The row index is
+  preserved through the pipeline; when callers feed the time-indexed output
+  of ``model.forward(X)`` (Phase F), the resulting onset times come out in
+  seconds directly.
 - `threshold`: scalar (or class attribute `self.threshold`).
 - `filter_w` (default `10.0`): smoothing window in seconds.
 - `rwin_size` (default `5.0`): spread-detection lookahead in seconds.
@@ -193,21 +207,27 @@ original length by appending the **last valid row** at the END,
 
 **S6.** Onset detection. For each channel:
 - If channel is in `seized_idxs` and has any True row in `sz_clf_ff`:
-  `onset_window_idx[col] = sz_clf_ff[col].idxmax()`
-- Otherwise: `onset_window_idx[col] = NaN` and the column in `sz_clf_ff` is
-  set to all zeros.
+  `onset[col] = sz_clf_ff[col].idxmax()`
+- Otherwise: `onset[col] = NaN` and the column in `sz_clf_ff` is set to
+  all zeros.
 
-**S7.** Convert to absolute seconds (start-time convention, section 5):
-```
-onset_time_sec[col] = onset_window_idx[col] * step_samples / fs
-```
+The value of `onset[col]` is whatever ``sz_prob`` was indexed by. When
+callers feed the time-indexed output of ``model.forward(X)`` (Phase F),
+``idxmax`` returns the onset time in **seconds** directly — no further
+``* step_samples / fs`` conversion required. When callers pass a
+positional-indexed DataFrame, ``idxmax`` returns a window index, and
+the caller multiplies by ``step_samples / fs`` if seconds are wanted.
 
 ### 7.3 Returns
 
 - Default: `sz_idxs_df` — a single-row DataFrame whose columns are channel
-  names and values are onset window indices (NaN for non-seizing channels).
-- If `ret_smooth_mat=True`: also return `sz_clf_ff` (the post-spread,
-  post-padding matrix used for onset detection).
+  names and values are onset labels (NaN for non-seizing channels). The
+  label type matches the row index of the input ``sz_prob``: time in
+  seconds when the input is time-indexed (the standard case post-Phase F),
+  or window indices when the input is positional.
+- If `ret_smooth_mat=True`: also return `sz_clf_ff` — the post-spread,
+  post-padding matrix, indexed by the same labels as ``sz_prob`` (time in
+  seconds in the standard case).
 
 ### 7.4 Reported onset is biased earlier than first raw threshold crossing
 
@@ -335,6 +355,8 @@ one or more `pytest` cases.
 - Non-integer products: `t[i] == i * step_samples / fs`, may drift from
   requested stride by at most `0.5 / fs` per window.
 - `np.diff(t)` is constant.
+- ``forward(X)``'s row index is ``self.get_win_index(len(X))``, named
+  ``t_sec``, with values numerically equal to ``get_win_times(len(X))``.
 
 **Section 6 (seconds → window-count):**
 - Closed-form check for representative `(D, w_size, w_stride)` sets, including

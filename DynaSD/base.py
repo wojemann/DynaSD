@@ -26,7 +26,8 @@ class DynaSDBase:
     
     def get_win_times(self, n_samples):
         """Realized start time (seconds) of each window for a signal of length
-        ``n_samples`` samples. See spec section 5.
+        ``n_samples`` samples, returned as a 1D numpy array. See spec
+        section 5.
 
         Raises ``ValueError`` if input is shorter than one window.
         """
@@ -40,6 +41,17 @@ class DynaSDBase:
             )
         n_windows = (n_samples - win_samples) // step_samples + 1
         return np.arange(n_windows) * step_samples / self.fs
+
+    def get_win_index(self, n_samples):
+        """Realized window-start times as a labeled :class:`pandas.Index`,
+        suitable for use as the row index of inference DataFrames.
+
+        Equivalent to ``pd.Index(self.get_win_times(n_samples), name="t_sec")``.
+        Every detector's :meth:`forward` should set
+        ``out.index = self.get_win_index(len(X))`` so inference DataFrames
+        are self-describing on the time axis.
+        """
+        return pd.Index(self.get_win_times(n_samples), name="t_sec")
     
     def get_onset_and_spread(self, sz_prob, threshold=None,
                             ret_smooth_mat=False,
@@ -76,41 +88,53 @@ class DynaSDBase:
 
         filter_w_idx = np.floor((filter_w - self.w_size)/self.w_stride).astype(int) + 1
 
-        sz_prob = pd.DataFrame(sc.ndimage.uniform_filter1d(sz_prob, size=filter_w_idx, mode='nearest', axis=0, origin=0), columns=sz_prob.columns)
+        # Preserve sz_prob's row index through the smoothing/threshold/spread
+        # pipeline so that, when callers feed in a time-indexed DataFrame
+        # produced by model.forward(X), idxmax-based onset detection
+        # produces times in seconds directly (spec R5/R6).
+        input_index = sz_prob.index
 
-        sz_clf = (sz_prob > threshold).reset_index(drop=True)
-        # sz_clf = pd.DataFrame(sc.ndimage.median_filter(sz_clf, size=filter_w_idx, mode='nearest', axes=0, origin=0), columns=sz_prob.columns)
+        sz_prob = pd.DataFrame(
+            sc.ndimage.uniform_filter1d(
+                sz_prob, size=filter_w_idx, mode='nearest', axis=0, origin=0
+            ),
+            columns=sz_prob.columns,
+            index=input_index,
+        )
+
+        sz_clf = sz_prob > threshold
         seized_idxs = np.any(sz_clf, axis=0)
         rwin_size_idx = np.floor((rwin_size - self.w_size)/self.w_stride).astype(int) + 1
         rwin_req_idx = np.floor((rwin_req - self.w_size)/self.w_stride).astype(int) + 1
-        
+
         # Use convolution for faster sliding window computation
         if len(sz_clf) > rwin_size_idx - 1:
             kernel = np.ones(rwin_size_idx)
-            sz_spread_data = np.zeros((len(sz_clf) - rwin_size_idx + 1, sz_clf.shape[1]))
+            n_valid = len(sz_clf) - rwin_size_idx + 1
+            sz_spread_data = np.zeros((n_valid, sz_clf.shape[1]))
 
             for i, col in enumerate(sz_clf.columns):
                 sliding_sums = np.convolve(sz_clf[col].astype(int), kernel, mode='valid')
                 sz_spread_data[:, i] = (sliding_sums >= rwin_req_idx).astype(int)
 
-            sz_spread_idxs_all = pd.DataFrame(sz_spread_data, columns=sz_clf.columns)
-
             # Pad at the END with the last valid row (spec R1). End-padding
             # does not affect onset detection: idxmax returns the first True
             # row, which always lies in the unpadded region for any channel
-            # actually flagged as seizing.
+            # actually flagged as seizing. Padded rows reuse the trailing
+            # entries of the input index so the output's index labels remain
+            # the original window timestamps.
             missing_rows = rwin_size_idx - 1
-            if len(sz_spread_idxs_all) > 0:
-                last_valid_row = sz_spread_idxs_all.iloc[-1]
-                padding = pd.DataFrame([last_valid_row] * missing_rows, columns=sz_spread_idxs_all.columns)
-                sz_spread_idxs_all_padded = pd.concat([sz_spread_idxs_all, padding], ignore_index=True)
-            
+            if n_valid > 0:
+                last_valid_row = sz_spread_data[-1]
+                padded = np.tile(last_valid_row, (missing_rows, 1))
+                sz_spread_full = np.vstack([sz_spread_data, padded])
             else:
-                # Handle edge case where convolution produces no output
-                sz_spread_idxs_all_padded = pd.DataFrame(np.zeros((len(sz_clf), len(sz_clf.columns))), columns=sz_clf.columns)
-            sz_clf_ff = sz_spread_idxs_all_padded # * sz_clf # This effectively undoes all of the convolution that we just did, so commenting out.
+                sz_spread_full = np.zeros_like(sz_clf.values, dtype=float)
+            sz_clf_ff = pd.DataFrame(
+                sz_spread_full, columns=sz_clf.columns, index=input_index
+            )
         else:
-            sz_clf_ff = sz_clf
+            sz_clf_ff = sz_clf.astype(float)
         
         # Forward-fill logic continues unchanged...
         sz_spread_idxs = sz_clf_ff.loc[:,seized_idxs]

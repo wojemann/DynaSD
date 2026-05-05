@@ -359,8 +359,14 @@ class ONCET(DynaSDBase):
             y = self.model.get_seizure_probability(batch_x)
             probabilities.append(y.detach().cpu().numpy())
         probabilities = np.concatenate(probabilities, axis=0)
+        # Reshape to windows x channels format. Index is realized
+        # window-start times in seconds (spec section 5).
         probabilities = probabilities.reshape(nwins, nch)
-        features_df = pd.DataFrame(probabilities, columns=x.columns)
+        features_df = pd.DataFrame(
+            probabilities,
+            columns=x.columns,
+            index=self.get_win_index(len(x)),
+        )
         return features_df
         # y = self.model.get_seizure_probability(x_prepared)
         

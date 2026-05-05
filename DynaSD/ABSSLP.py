@@ -128,10 +128,14 @@ class ABSSLP(DynaSDBase):
         scaled_slopes = slopes / self.nstds.reshape(-1, 1) * self.fs
         scaled_slopes = scaled_slopes.squeeze()
         
-        # Convert to DataFrame with windows as rows, channels as columns
-        # scaled_slopes is currently channels x windows, so transpose
-        features_df = pd.DataFrame(scaled_slopes.T, columns=x.columns)
-        
+        # Convert to DataFrame with windows as rows, channels as columns.
+        # Index is realized window-start times in seconds (spec section 5).
+        features_df = pd.DataFrame(
+            scaled_slopes.T,
+            columns=x.columns,
+            index=self.get_win_index(len(x)),
+        )
+
         return features_df
     
     def __call__(self, *args):

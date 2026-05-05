@@ -163,10 +163,15 @@ class WVNT(DynaSDBase):
         # Generate predictions (get seizure probability from class 1)
         y = self.model.predict(x_prepared,verbose=verbocity,batch_size=self.batch_size)[:, 1]
         
-        # Reshape to windows x channels format and convert to DataFrame
+        # Reshape to windows x channels format and convert to DataFrame.
+        # Index is realized window-start times in seconds (spec section 5).
         probabilities = y.reshape(nwins, nch)
-        features_df = pd.DataFrame(probabilities, columns=x.columns)
-        
+        features_df = pd.DataFrame(
+            probabilities,
+            columns=x.columns,
+            index=self.get_win_index(len(x)),
+        )
+
         return features_df
         
     def __call__(self, *args):

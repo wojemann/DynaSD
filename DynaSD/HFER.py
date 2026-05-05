@@ -60,9 +60,14 @@ class HFER(DynaSDBase):
             er_data = self._compute_single_channel_ER(channel_data)
             all_features.append(er_data)
 
-        # stack all channel results
+        # stack all channel results; index is realized window-start times
+        # in seconds (spec section 5).
         feature_master = np.array(all_features).T
-        return pd.DataFrame(feature_master, columns=channels)
+        return pd.DataFrame(
+            feature_master,
+            columns=channels,
+            index=self.get_win_index(len(X)),
+        )
 
     def _compute_single_channel_ER(self, channel_data):
         windows = moving_win_clips(channel_data, self.fs, self.w_size, self.w_stride)

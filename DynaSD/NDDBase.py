@@ -789,7 +789,18 @@ class NDDBase(DynaSDBase):
         
         # Store window times using new windowing
         self.time_wins = self.window_start_times
-        
+
+        # Time-index inference outputs (spec section 5, Phase F): every
+        # detector's forward() returns a DataFrame whose row index is the
+        # realized window-start times in seconds.
+        win_index = self.get_win_index(len(X))
+        if len(mse_df) == len(win_index):
+            mse_df.index = win_index
+        if not mse_z.empty and len(mse_z) == len(win_index):
+            mse_z.index = win_index
+        if len(ndd) == len(win_index):
+            ndd.index = win_index
+
         # Store for backward compatibility
         self.mse_df = mse_df
         self.mse_z_df = mse_z if not mse_z.empty else None
