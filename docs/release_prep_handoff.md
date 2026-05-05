@@ -1,62 +1,189 @@
 # Release Prep Handoff
 
-Date: 2026-04-28  
-Active branch: `release-prep/cleanup-packaging`  
-Checkpoint commit: `87bba10`  
-Commit message: `chore: archive legacy artifacts and draft release scaffolding`
+Date: 2026-05-05
+Active branch: `release-prep/cleanup-packaging`
+Original wo_dev tip preserved at git tag: `submission` (commit `897c3d5`)
 
-## What was completed
-
-1. Archived legacy/ad hoc root files to keep release surface cleaner:
-   - `archive/legacy-tests/performance_test.py`
-   - `archive/legacy-tests/test_caching_fix.py`
-   - `archive/legacy-tests/test_partial_overlap.py`
-   - `archive/legacy-tests/test_robust_caching.py`
-   - `archive/legacy-tests/test_same_data_subsets.py`
-   - `archive/notes/final_optimization_recommendations.md`
-   - `archive/notes/optimization_guide.md`
-2. Added `archive/README.md` to document archive purpose.
-3. Reworked `README.md` into release-oriented structure and restored header image.
-4. Added initial packaging draft in `pyproject.toml`.
-5. Added contributor/testing draft docs:
-   - `docs/testing_strategy.md`
-   - `docs/extending_models.md`
-
-## Decisions made during drafting
-
-- Keep work isolated on `release-prep/cleanup-packaging` for safer iteration.
-- Treat `ieeg` as test/dev-only support for remote data workflows, not required core runtime functionality.
-- Do not gate new models on benchmark performance.
-- Prioritize tests for timing behavior of smoothing/windowing utilities.
-- Keep `docs/extending_models.md` direction as-is.
-
-## Current testing philosophy
-
-Focus on deterministic timing/unit behavior rather than model benchmark enforcement:
-- window count correctness for `(n_samples, fs, w_size, w_stride)`,
-- boundary/index alignment for generated windows,
-- timestamp monotonicity and alignment,
-- smoothing output length/index behavior,
-- edge cases (very short input, exact-window input, partial-final-window input).
-
-## Immediate next steps
-
-1. Add first `pytest` timing tests in `tests/` targeting smoothing/windowing helpers.
-2. Make package imports lighter (reduce eager heavy imports in `DynaSD/__init__.py`).
-3. Decide whether to keep `setup.py` temporarily or retire it in favor of `pyproject.toml`.
-4. Add a minimal CI test run (`pytest`) once basic tests are in place.
-
-## Resume checklist on another machine
+## How to resume on a new machine
 
 ```bash
-git fetch --all
+git fetch --all --tags
 git checkout release-prep/cleanup-packaging
-git log --oneline -n 10
+git log --oneline submission..HEAD
 git status
 ```
 
 If branch is missing locally:
-
 ```bash
 git checkout -b release-prep/cleanup-packaging origin/release-prep/cleanup-packaging
 ```
+
+Test environment: `stim-env` conda env (has pytest, neurodsp, torch,
+matplotlib, seaborn). The package's own dev install (`pip install -e ".[test]"`
+in `dynasd_env`) was set up but not used end-to-end.
+
+```bash
+conda run -n stim-env python -m pytest tests/test_windowing_smoothing_spec.py \
+                                       tests/test_model_api_contract.py \
+                                       tests/test_absslp_spec.py \
+                                       tests/test_absslp.py \
+                                       tests/test_ndd.py
+# Expected: 121 passed
+```
+
+## What's been done since the `submission` tag
+
+10 commits on `release-prep/cleanup-packaging`. From oldest to newest:
+
+| Hash | Phase | Summary |
+|---|---|---|
+| `87bba10` | (prior) | Original release-prep scaffolding (archive directory, draft pyproject) |
+| `9aa2e30` | (prior) | Initial release-prep docs (testing strategy, extending models, this doc) |
+| `892f514` | C | Lock down windowing/smoothing spec; refactor `DynaSD/utils.py` into the new `DynaSD/tools/` subpackage; introduce `DynaSDBase.get_onset_and_spread` validation; rename `MovingWinClips → moving_win_clips`; add 55-test windowing/smoothing spec suite |
+| `e7d79bf` | A | Move 7 dead model files to `archive/legacy-models/` (~2400 LOC archived) |
+| `d3b1361` | B | NDDBase kwarg validation; refresh `tests/test_ndd.py` to current API |
+| `b58b1d4` | D | Document unified `forward(X)` contract on `DynaSDBase`; fix NDD test (was the result of a Phase B mistake) |
+| `67544e6` | E | Per-model API contract test + ABSSLP math-property tests; HFER `is_fitted` consistency fix |
+| `f42b26b` | E+ | Extend contract coverage to all NN models in `__all__`; standardize IMPRINT `is_fitted`; document Phase F decision in `docs/phase_f_time_index_api.md`; add neurodsp/matplotlib/seaborn to `[test]` extras |
+| `8cd0f69` | E++ | GIN and LiNDDA reject unsupported `sequence_length` with ValueError naming the supported set (instead of bare KeyError mid-construction) |
+| `ba1efea` | A+ | Archive LiRNDDA and MINDD (not in published paper, no decision boundaries); drop from `__all__` |
+| `806189e` | F | Time-indexed DataFrame outputs across all detectors; `forward(X)` row index is now realized window-start times in seconds named `t_sec`; `get_onset_and_spread` preserves input index through pipeline so onset times come out in seconds directly |
+
+## Current package surface
+
+`DynaSD/__init__.py` exports:
+```python
+__all__ = ["NDD", "DynaSDBase", "NDDBase", "ABSSLP", "WVNT", "GIN",
+           "LiNDDA", "IMPRINT", "HFER", "ONCET"]
+```
+
+Layout:
+```
+DynaSD/
+  __init__.py
+  base.py                        # DynaSDBase: shared windowing, smoothing, onset, threshold logic
+  utils.py                       # core windowing helpers (canonical sample counts, num_wins, moving_win_clips)
+  NDDBase.py                     # NN-detector shared training/inference base
+  ABSSLP.py, HFER.py, IMPRINT.py # classical detectors (DynaSDBase subclasses)
+  ONCET.py, WAVENET.py           # torch-classical hybrids (need pretrained checkpoints)
+  NDD.py, GIN.py, LiNDDA.py      # NN forecasters (NDDBase subclasses)
+  tools/                         # researcher tooling (separate from runtime utils)
+    io.py                        # iEEG.org loading, config, label cleaning
+    preprocessing.py             # bad-channel detect, montage, filter, AR(1), pipeline
+    viz.py                       # multi-channel plotting (matplotlib/seaborn)
+    stats.py                     # cohens_d
+archive/
+  legacy-models/                 # 9 archived files: GIN_old, NDD_old, NDD_fixed, LiRNDDA_backup, LiRNDDA, MINDD, ONDD, absolute_slope, models.py
+  legacy-tests/                  # earlier exploratory tests
+  notes/                         # earlier optimization notes
+docs/
+  spec_windowing_smoothing.md    # locked spec; 11 sections + R1-R6 appendix
+  phase_f_time_index_api.md      # design doc for the time-indexed switch (now implemented)
+  testing_strategy.md            # broader testing direction; § 6 = deferred end-to-end suite
+  extending_models.md
+  release_prep_handoff.md        # this file
+```
+
+## Locked contracts
+
+`docs/spec_windowing_smoothing.md` is the source of truth for windowing,
+smoothing, onset detection, and the time-indexed inference DataFrame
+contract. It records six resolved design decisions:
+
+- **R1.** Spread convolution pads at the END with the last valid row.
+  Reported onset is shifted earlier than first raw threshold crossing
+  by `(rwin_size_idx - rwin_req_idx)` windows; this is intentional
+  forward-looking semantics.
+- **R2.** Window timestamps are window START times. Acausal but
+  matches the package's "earliest-detection" intent.
+- **R3.** Full window-index → seconds chain documented; total bias
+  formula `(filter_w_idx/2 + (rwin_size_idx - rwin_req_idx)) * w_stride`.
+- **R4.** Input shorter than one window raises `ValueError` (loud
+  failure across all three windowing entry points).
+- **R5.** Sample-count-first canonical math; non-integer `w_size*fs` /
+  `w_stride*fs` products emit `UserWarning` once per affected parameter
+  per call site.
+- **R6.** Seconds → window-count uses start-and-end containment:
+  `floor((D - w_size) / w_stride) + 1`. Validated with
+  `D >= w_size` and `rwin_req <= rwin_size`.
+
+Every detector in `__all__` satisfies the unified inference contract:
+- `(fs, w_size, w_stride)` accepted at construction
+- `forward(X)` raises if not fit; `fit(X)` sets `is_fitted = True`
+- `forward(X) → pd.DataFrame` of shape `(num_wins(len(X), fs, w_size, w_stride), n_channels)`
+- columns are `X.columns`; index is `get_win_index(len(X))` named `"t_sec"`
+- `model(X)` is exactly `model.forward(X)` via `DynaSDBase.__call__`
+
+## Test suite
+
+121 deterministic tests passing across:
+- `tests/test_windowing_smoothing_spec.py` (55) — windowing, smoothing,
+  onset detection math validated against the spec.
+- `tests/test_model_api_contract.py` (62) — 8 contract checks × 6 models
+  (ABSSLP, HFER, IMPRINT, NDD, GIN, LiNDDA) + 6 NDDBase kwarg-validation
+  tests + 2 unsupported-sequence_length ValueError tests.
+- `tests/test_absslp_spec.py` (4) — ABSSLP non-negativity, amplitude
+  monotonicity, determinism, zero-features for level-aligned inputs.
+- `tests/test_absslp.py` (3) — pre-existing ABSSLP integration test.
+- `tests/test_ndd.py` (3) — NDD integration test (refreshed to current API).
+
+Pre-existing failures not addressed:
+- `tests/test_gin.py` may now import after `neurodsp` was added to `[test]`
+  extras — needs verification. Whether its assertions actually pass
+  against current GIN is unknown.
+- `tests/test_wavenet.py` (3 tests) skip because `WAVENET.load_wavenet_model`
+  doesn't exist; needs investigation or test refresh.
+
+## What's next
+
+### Tier 1 — small, contained, high-value
+
+1. **IMPRINT `fit()` returns `self`** while every other model returns `None`.
+   1-line consistency fix.
+2. **Audit `tests/test_gin.py`.** Now that `neurodsp` is in `[test]` deps,
+   verify the test imports cleanly and check whether assertions pass
+   against current GIN. Either fix or refresh.
+3. **`examples/example_utils.py` has a duplicate of `plot_ieeg_data`** —
+   delete and import from `DynaSD.tools.viz`.
+4. **HFER + IMPRINT math-property tests** mirroring the ABSSLP pattern.
+   Each detector should have a small file pinning its mathematical
+   contract.
+
+### Tier 2 — bigger but still scoped
+
+5. **NDDBase deeper unit tests** beyond kwarg validation: sequence
+   preparation correctness, sliding-window logic, MSE aggregation.
+6. **Extend per-model contract test to ONCET and WVNT** once a small
+   pretrained-checkpoint fixture is available (or stub `_load_model`
+   so the test can run without real weights).
+
+### Tier 3 — bigger commitment
+
+7. **Deferred simulated-signal end-to-end suite** documented in
+   `docs/testing_strategy.md` § 6. Per-model planted-seizure fixtures
+   with documented detection tolerances. This is the "does it actually
+   detect seizures" evidence beyond structural correctness.
+
+### Tier 4 — release infrastructure
+
+8. CI matrix (GitHub Actions, py3.10/3.11/3.12, core + extras).
+9. README rewrite with a quickstart per detector class showing the
+   time-indexed `forward(X)` workflow.
+10. CHANGELOG, LICENSE review, version pinning policy.
+11. TestPyPI release; collect feedback from 1-2 outside users; real
+    PyPI release.
+
+## Working-style notes for the next session
+
+- The user prefers stepping through phases one at a time and approving
+  each direction before code is written. Specs and design decisions
+  are taken seriously and documented before tests are written; tests
+  are written before code is changed where possible.
+- `submission` tag is the recovery checkpoint; deletion of files is
+  preferred via `git mv` to `archive/legacy-models/` (matches the
+  pre-existing convention in `archive/`).
+- Commits are kept focused — one phase or one logical change per
+  commit, with substantive commit messages explaining rationale.
+- The user maintains a `claude.md` scratch file in the working tree
+  that is not committed; do not stage it.
+- Tests are run via `conda run -n stim-env python -m pytest ...`.
