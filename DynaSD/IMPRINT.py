@@ -8,7 +8,7 @@ from .utils import moving_win_clips
 
 
 class IMPRINT(DynaSDBase):
-    def __init__(self, fs, onset_buffer=0, offset_buffer=0, w_size=1, w_stride=0.125):
+    def __init__(self, fs, w_size=1, w_stride=0.125):
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride)
         self.freq_bands = {
             'delta': (0.5, 4),
@@ -24,14 +24,10 @@ class IMPRINT(DynaSDBase):
         self.window_size = 1
         self.det = 7 # count of windows beyond first detected onset which will also be considered as onset
 
-        self.onset_buffer = onset_buffer  # Number of seconds to shift back clinically labelled onset time
-        self.offset_buffer = offset_buffer  # Number of seconds to extend beyond seizure end
-
         self.prop_rec = 0.8 # proportion of the rec_thresh that is required for activity to be considered in onset
         self.rec_thresh = 9 # number of seconds for which activity mst persist to be considered a seizure
         self.rec_type = "sec" # type of threshold ot validation activity is ictal ("sec" or "prop")
         self.mad_thresh = 5 # MAD threshold for detection of activity
-        self.ictal_buffer = 10 # Number of seconds to shift back clinically labelled onset time to ensure 'true' onset is captured
         self.channel_labels = None
 
         # Constant for MAD calculation
@@ -221,31 +217,18 @@ class IMPRINT(DynaSDBase):
         """
 
         assert self.is_fitted, "Must fit model before running inference"
-        
-        # Start analysis ictal buffer seconds before seizure onset
-        analysis_start_time = self.onset_buffer - self.ictal_buffer
-        
-        # Get time array
-        time_array = np.arange(len(X)) / self.fs
-        
-        # Extract data from analysis start time onward
-        analysis_mask = time_array >= analysis_start_time
-        X = X[analysis_mask].copy()
-        
-        # Check inclusion criteria  
+
+        # Check inclusion criteria
         if not self.check_inclusion(X):
             raise ValueError("Analysis data does not meet inclusion criteria")
-        
+
         # Calculate ictal features
         ictal_features, window_times = self.calc_features(X)
-        
+
         # Calculate MAD scores
         mahal_mad = self.ictal_mad_score(ictal_features)
 
-        # Index is realized window-start times in seconds (spec section 5),
-        # measured relative to the start of the analyzed (post-buffer-slice)
-        # signal — i.e. seconds after analysis_start_time, not seconds
-        # since the original recording's t=0.
+        # Index is realized window-start times in seconds (spec section 5).
         feature_df = pd.DataFrame(
             mahal_mad.T,
             columns=X.columns,
