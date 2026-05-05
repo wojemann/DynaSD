@@ -303,6 +303,50 @@ def test_lindda_unsupported_sequence_length_raises():
                num_epochs=1, use_cuda=False, verbose=False)
 
 
+@pytest.mark.parametrize("n_samples", [
+    7680,   # 30.0000s — exact window boundary
+    7807,   # 30.4961s — between window boundaries (formerly produced 60 rows)
+    7808,   # 30.5000s — exact window boundary
+    7935,   # 30.9961s — between window boundaries (formerly produced 61 rows)
+])
+def test_nddbase_forward_length_matches_num_wins(n_samples):
+    """Regression: NDDBase.forward output must have exactly num_wins rows
+    regardless of whether ``len(X)`` falls on a window boundary.
+
+    Pre-fix, _aggregate_sequences_to_windows_mse computed its own window
+    grid from max(target_end_time) + forecast_length/fs, which could
+    produce one extra window for inputs whose length fell between
+    boundaries. The defensive guard in forward() then silently dropped
+    the time-index assignment, leaving a positional-indexed DataFrame
+    that violated the Phase F contract.
+    """
+    fs = 256
+    rng = np.random.RandomState(0)
+    X = pd.DataFrame(
+        rng.normal(size=(n_samples, 2)),
+        columns=["ch0", "ch1"],
+    )
+    model = NDD(
+        fs=fs, w_size=1.0, w_stride=0.5,
+        hidden_size=4, num_layers=1,
+        sequence_length=12, forecast_length=1,
+        num_epochs=1, batch_size="full", lr=0.01,
+        use_cuda=False, verbose=False,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        model.fit(X)
+        out = model.forward(X)
+    expected_n_wins = num_wins(n_samples, fs, 1.0, 0.5)
+    assert out.shape[0] == expected_n_wins, (
+        f"forward returned {out.shape[0]} rows; expected num_wins={expected_n_wins}"
+    )
+    assert out.index.name == "t_sec"
+    np.testing.assert_allclose(
+        out.index.values, model.get_win_index(n_samples).values, rtol=0, atol=1e-12
+    )
+
+
 def test_nddbase_is_abstract_for_forward():
     """Instantiating NDDBase directly and calling forward() without a
     fitted subclass-specific model must not silently return junk.

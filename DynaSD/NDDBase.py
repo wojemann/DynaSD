@@ -652,27 +652,15 @@ class NDDBase(DynaSDBase):
         if not seq_results:
             raise ValueError("No sequences provided for aggregation")
         
-        # max_sequence_time = max(s['target_end_time'] for s in seq_results) + self.forecast_length/self.fs
-        # print("Max sequence time:", max_sequence_time)
-        # # # Create windows
-        # window_starts = []
-        # current_time = 0.0
-        # while current_time + self.w_size < max_sequence_time:
-        #     window_starts.append(current_time)
-        #     current_time += self.w_stride
+        # Use the canonical window grid from DynaSDBase.get_win_times so the
+        # aggregation produces exactly num_wins(len(X), fs, w_size, w_stride)
+        # rows — matching the spec contract that every detector's forward(X)
+        # output has shape (num_wins(len(X), ...), n_channels). Sequences whose
+        # target falls past the last window's end are dropped from the
+        # aggregate (consistent with the partial-final-window discard rule
+        # used elsewhere in the package).
         window_starts = self.get_win_times(X.shape[0])
-        
-        max_sequence_time = max(s['target_end_time'] for s in seq_results) + self.forecast_length/self.fs
-        
-        # Create windows
-        window_starts = []
-        current_time = 0.0
-        while current_time + self.w_size <= max_sequence_time:
-            window_starts.append(current_time)
-            current_time += self.w_stride
-
         nwins = len(window_starts)
-        window_starts = np.array(window_starts)
         window_ends = window_starts + self.w_size
         
         # Extract sequence times and MSE as arrays for vectorized operations
@@ -792,14 +780,16 @@ class NDDBase(DynaSDBase):
 
         # Time-index inference outputs (spec section 5, Phase F): every
         # detector's forward() returns a DataFrame whose row index is the
-        # realized window-start times in seconds.
+        # realized window-start times in seconds. Length agreement with
+        # win_index is guaranteed by _aggregate_sequences_to_windows_mse
+        # using get_win_times for its window grid; mismatches surface as
+        # a pandas ValueError on the assignment below rather than silent
+        # contract violation.
         win_index = self.get_win_index(len(X))
-        if len(mse_df) == len(win_index):
-            mse_df.index = win_index
-        if not mse_z.empty and len(mse_z) == len(win_index):
+        mse_df.index = win_index
+        if not mse_z.empty:
             mse_z.index = win_index
-        if len(ndd) == len(win_index):
-            ndd.index = win_index
+        ndd.index = win_index
 
         # Store for backward compatibility
         self.mse_df = mse_df
