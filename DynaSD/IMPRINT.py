@@ -207,9 +207,9 @@ class IMPRINT(DynaSDBase):
                 'scaled_mad': ref_smad
             }
 
-        # Standardize fitted-state convention across the package.
+        # Standardize fitted-state convention across the package: every
+        # detector's fit() sets is_fitted=True and returns None.
         self.is_fitted = True
-        return self
 
     def forward(self, X):
         """
