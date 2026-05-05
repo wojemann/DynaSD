@@ -19,6 +19,7 @@ fixtures are out of scope here; see ``docs/testing_strategy.md`` § 6 for
 the deferred end-to-end suite.
 """
 
+import os
 import sys
 import warnings
 from pathlib import Path
@@ -29,7 +30,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, NDD
+from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, NDD, ONCET, WVNT
 from DynaSD.NDDBase import NDDBase
 from DynaSD.utils import num_wins
 
@@ -38,21 +39,31 @@ from DynaSD.utils import num_wins
 # Fixture: small deterministic synthetic input
 # ----------------------------------------------------------------------
 
-FS = 256          # ≥ 240 Hz needed for IMPRINT's high_gamma band (70-120 Hz).
+# Default fs for the bulk of the contract suite. ≥ 240 Hz is needed for
+# IMPRINT's high_gamma band (70-120 Hz). WVNT carries its own 128 Hz
+# fixture because its pretrained TensorFlow checkpoint expects
+# 128-sample windows; signal generation in each test reads
+# (model.fs, model.w_size, model.w_stride) so per-model overrides
+# work without touching the test bodies.
+FS = 256
 W_SIZE = 1.0
 W_STRIDE = 0.5
 N_SECONDS = 30
 N_CHANNELS = 4
 
 
-@pytest.fixture
-def synthetic_signal():
-    """30 seconds of seeded random iEEG-like data, 4 channels."""
-    rng = np.random.RandomState(0)
-    n_samples = FS * N_SECONDS
-    data = rng.normal(0.0, 1.0, size=(n_samples, N_CHANNELS))
-    cols = [f"ch{i}" for i in range(N_CHANNELS)]
+def _make_signal(fs, n_seconds=N_SECONDS, n_channels=N_CHANNELS, seed=0):
+    """Seeded random iEEG-like data at the given sampling rate."""
+    rng = np.random.RandomState(seed)
+    n_samples = fs * n_seconds
+    data = rng.normal(0.0, 1.0, size=(n_samples, n_channels))
+    cols = [f"ch{i}" for i in range(n_channels)]
     return pd.DataFrame(data, columns=cols)
+
+
+def _signal_for(model):
+    """Build a synthetic signal matched to ``model.fs``."""
+    return _make_signal(fs=model.fs)
 
 
 # ----------------------------------------------------------------------
@@ -103,6 +114,65 @@ def _build_lindda():
     return LiNDDA(**{**_NN_BASE, "sequence_length": 4, "forecast_length": 4})
 
 
+# ----------------------------------------------------------------------
+# Pretrained-checkpoint detectors (ONCET, WVNT)
+# ----------------------------------------------------------------------
+#
+# These two require pretrained weights at construction time. The expected
+# paths default to the developer's local layout; environment variables
+# allow overriding for other developers. Tests skip cleanly when the
+# checkpoint is absent rather than failing on an unavailable file.
+
+_ONCET_CHECKPOINT = os.environ.get(
+    "DYNASD_ONCET_CHECKPOINT",
+    "/Users/wojemann/local_data/dynasd_data/PROCESSED_DATA/CHECKPOINTS/ONCET/balanced_xl/best_model.pth",
+)
+_ONCET_CONFIG = os.environ.get(
+    "DYNASD_ONCET_CONFIG",
+    "/Users/wojemann/local_data/dynasd_data/PROCESSED_DATA/CHECKPOINTS/ONCET/balanced_xl/final_training_config.json",
+)
+_WVNT_CHECKPOINT = os.environ.get(
+    "DYNASD_WVNT_CHECKPOINT",
+    "/Users/wojemann/local_data/dynasd_data/PROCESSED_DATA/CHECKPOINTS/WaveNet/v111.hdf5",
+)
+
+
+def _build_oncet():
+    if not (os.path.exists(_ONCET_CHECKPOINT) and os.path.exists(_ONCET_CONFIG)):
+        pytest.skip(
+            f"ONCET checkpoint not available at {_ONCET_CHECKPOINT} / "
+            f"{_ONCET_CONFIG}. Set DYNASD_ONCET_CHECKPOINT / "
+            f"DYNASD_ONCET_CONFIG to override."
+        )
+    # ONCET trained at 256 Hz on 1-second windows; force CPU for test
+    # determinism and reproducibility across machines.
+    return ONCET(
+        fs=256, w_size=1.0, w_stride=0.5,
+        checkpoint_path=_ONCET_CHECKPOINT,
+        config_path=_ONCET_CONFIG,
+        device="cpu",
+        verbose=False,
+    )
+
+
+def _build_wvnt():
+    if not _WVNT_CHECKPOINT or not os.path.exists(_WVNT_CHECKPOINT):
+        pytest.skip(
+            f"WVNT checkpoint not available at {_WVNT_CHECKPOINT}. "
+            f"Set DYNASD_WVNT_CHECKPOINT to override."
+        )
+    pytest.importorskip("tensorflow")
+    # WVNT trained at 128 Hz on 1-second windows; the contract suite's
+    # generic fs=256 fixture would mis-shape the input, so this builder
+    # carries its own fs and the per-test signal is rebuilt from
+    # model.fs at call sites.
+    return WVNT(
+        fs=128, w_size=1.0, w_stride=0.5,
+        model_path=_WVNT_CHECKPOINT,
+        verbose=False,
+    )
+
+
 MODELS = [
     pytest.param(_build_absslp, id="ABSSLP"),
     pytest.param(_build_hfer, id="HFER"),
@@ -110,14 +180,9 @@ MODELS = [
     pytest.param(_build_ndd, id="NDD"),
     pytest.param(_build_gin, id="GIN"),
     pytest.param(_build_lindda, id="LiNDDA"),
+    pytest.param(_build_oncet, id="ONCET"),
+    pytest.param(_build_wvnt, id="WVNT"),
 ]
-
-# ONCET and WVNT are intentionally excluded: both require a ``model_path``
-# pointing to a pretrained checkpoint, which is not available in CI. The
-# unified forward(X) → DataFrame contract is documented to apply equally
-# to those two; the per-model integration suite (deferred until simulated-
-# signal fixtures land — see docs/testing_strategy.md § 6) will exercise
-# them with real checkpoints.
 
 
 # ----------------------------------------------------------------------
@@ -128,86 +193,93 @@ MODELS = [
 def test_constructor_does_not_raise(build):
     """Every model accepts (fs, w_size, w_stride) at construction."""
     model = build()
-    assert model.fs == FS
-    assert model.w_size == W_SIZE
-    assert model.w_stride == W_STRIDE
+    assert isinstance(model.fs, (int, float))
+    assert isinstance(model.w_size, (int, float))
+    assert isinstance(model.w_stride, (int, float))
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_forward_before_fit_raises(build, synthetic_signal):
+def test_forward_before_fit_raises(build):
     """Calling forward() before fit() must raise loudly, not return junk."""
     model = build()
+    signal = _signal_for(model)
     with pytest.raises((AssertionError, ValueError, AttributeError, NotImplementedError)):
-        model.forward(synthetic_signal)
+        model.forward(signal)
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_is_fitted_set_after_fit(build, synthetic_signal):
+def test_is_fitted_set_after_fit(build):
     """fit(X) must set is_fitted=True."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
+        model.fit(signal)
     assert model.is_fitted is True
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_forward_returns_dataframe(build, synthetic_signal):
+def test_forward_returns_dataframe(build):
     """forward(X) returns a pandas DataFrame."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
-        out = model.forward(synthetic_signal)
+        model.fit(signal)
+        out = model.forward(signal)
     assert isinstance(out, pd.DataFrame)
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_forward_shape_matches_num_wins(build, synthetic_signal):
+def test_forward_shape_matches_num_wins(build):
     """Output shape is (num_wins(len(X), fs, w_size, w_stride), n_channels)."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
-        out = model.forward(synthetic_signal)
-    expected_n_windows = num_wins(len(synthetic_signal), FS, W_SIZE, W_STRIDE)
-    assert out.shape == (expected_n_windows, N_CHANNELS)
+        model.fit(signal)
+        out = model.forward(signal)
+    expected_n_windows = num_wins(len(signal), model.fs, model.w_size, model.w_stride)
+    assert out.shape == (expected_n_windows, signal.shape[1])
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_forward_columns_match_input(build, synthetic_signal):
+def test_forward_columns_match_input(build):
     """forward output columns are the input channel names, in order."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
-        out = model.forward(synthetic_signal)
-    assert list(out.columns) == list(synthetic_signal.columns)
+        model.fit(signal)
+        out = model.forward(signal)
+    assert list(out.columns) == list(signal.columns)
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_forward_index_is_realized_window_times(build, synthetic_signal):
+def test_forward_index_is_realized_window_times(build):
     """forward(X)'s row index is the realized window-start times in seconds
     (spec section 5, Phase F). Equal to ``model.get_win_index(len(X))``."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
-        out = model.forward(synthetic_signal)
-    expected_index = model.get_win_index(len(synthetic_signal))
+        model.fit(signal)
+        out = model.forward(signal)
+    expected_index = model.get_win_index(len(signal))
     assert out.index.name == "t_sec"
     np.testing.assert_allclose(out.index.values, expected_index.values, rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("build", MODELS)
-def test_call_equals_forward(build, synthetic_signal):
+def test_call_equals_forward(build):
     """model(X) is exactly model.forward(X)."""
     model = build()
+    signal = _signal_for(model)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model.fit(synthetic_signal)
-        out_forward = model.forward(synthetic_signal)
-        out_call = model(synthetic_signal)
+        model.fit(signal)
+        out_forward = model.forward(signal)
+        out_call = model(signal)
     pd.testing.assert_frame_equal(out_forward, out_call)
 
 

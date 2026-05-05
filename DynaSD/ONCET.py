@@ -7,7 +7,7 @@ from .base import DynaSDBase
 from sklearn.preprocessing import RobustScaler
 import pandas as pd
 import numpy as np
-from .utils import num_wins, moving_win_clips
+from .utils import num_wins, moving_win_clips, _canonical_sample_counts
 from tqdm import tqdm
 class DepthwiseSeparableConv1d(nn.Module):
     """
@@ -295,6 +295,7 @@ class ONCET(DynaSDBase):
             )
             self.model.load_state_dict(checkpoint['model_state_dict'])
             self.model.to(self.device)
+            self.model.eval()
             # print(f"Successfully loaded ONCET model from {self.checkpoint_path}")
         except Exception as e:
             if self.verbose:
@@ -305,13 +306,14 @@ class ONCET(DynaSDBase):
     def fit(self, x):
         """
         Fit RobustScaler to training data for normalization.
-        
+
         Parameters:
         -----------
         x : pandas.DataFrame
             Training data (samples x channels)
         """
         self.scaler = RobustScaler().fit(x)
+        self.is_fitted = True
 
     def forward(self, x):
         """
@@ -330,9 +332,10 @@ class ONCET(DynaSDBase):
         pd.DataFrame
             Seizure probabilities with windows as rows and channels as columns
         """
+        assert self.is_fitted, "Must fit model before running inference"
         if self.model is None:
             raise ValueError("No valid ONCET model available for prediction")
-            
+
         # Store channel names and calculate dimensions
         chs = x.columns
         nwins = num_wins(len(x), self.fs, self.w_size, self.w_stride)
@@ -388,7 +391,7 @@ class ONCET(DynaSDBase):
         data_ch = data.columns.to_list()
         n_ch = len(data_ch)
         data_np = data.to_numpy()
-        win_len_idx = self.w_size*self.fs
+        win_len_idx, _ = _canonical_sample_counts(self.fs, self.w_size, self.w_stride)
         nwins = num_wins(len(data_np[:,0]),self.fs,self.w_size,self.w_stride)
         data_mat = np.zeros((nwins,win_len_idx,len(data_ch)))
         for k in range(n_ch):
