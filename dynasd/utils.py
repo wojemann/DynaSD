@@ -3,7 +3,7 @@ Core windowing utilities used by ``DynaSDBase`` and all DynaSD model classes.
 
 These are the only helpers the package imports at runtime when fitting or
 running inference with a model. Tooling for data loading, signal/channel
-preprocessing, visualization, and statistics lives in :mod:`DynaSD.tools`
+preprocessing, visualization, and statistics lives in :mod:`dynasd.tools`
 and is intentionally kept out of this module so that the runtime surface
 remains small and free of heavy optional dependencies.
 

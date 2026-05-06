@@ -22,7 +22,7 @@ quickstart.
   window-start time in seconds (named ``t_sec``).
 - `DynaSDBase.get_win_index(n_samples)` helper for time-indexed
   inference DataFrames.
-- Bundled synthetic seizure fixture: `DynaSD.load_example_seizure()`
+- Bundled synthetic seizure fixture: `dynasd.load_example_seizure()`
   returns a 60 s, 8-channel, fs=256 Hz polyspike recording with
   ground-truth onset/focal-channel labels.
 - Quickstart notebook at [`examples/quickstart.ipynb`](examples/quickstart.ipynb)

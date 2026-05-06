@@ -3,28 +3,28 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-class MultiStepGRU(nn.Module):
-    """GRU for autoregressive forecasting without skip connections or input stacks"""
+class MultiStepLSTM(nn.Module):
+    """LSTM for autoregressive forecasting without skip connections or input stacks"""
     def __init__(self, input_size, hidden_size, num_layers=1):
-        super(MultiStepGRU, self).__init__()
+        super(MultiStepLSTM, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.gru = nn.LSTM(
+        self.lstm = nn.LSTM(
             input_size=input_size,
-            hidden_size=hidden_size, 
+            hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True
         )
-        
+
         self.projection = nn.Linear(hidden_size, input_size)
         # Initialize weights properly to prevent vanishing gradients
         # self._init_weights()
-    
+
     def _init_weights(self):
         """Initialize weights to prevent vanishing gradients and state collapse"""
-        # Initialize GRU weights
-        for name, param in self.gru.named_parameters():
+        # Initialize LSTM weights
+        for name, param in self.lstm.named_parameters():
             if 'weight_ih' in name:  # Input-to-hidden weights
                 nn.init.xavier_uniform_(param, gain=1.0)
             elif 'weight_hh' in name:  # Hidden-to-hidden weights
@@ -34,37 +34,37 @@ class MultiStepGRU(nn.Module):
                 # Set update gate bias to 1 for better gradient flow
                 if 'bias_ih' in name:
                     param.data[param.size(0)//3:2*param.size(0)//3] = 1.0
-        
+
         # Initialize projection layer weights
         nn.init.xavier_uniform_(self.projection.weight, gain=1.0)
         nn.init.zeros_(self.projection.bias)
-    
+
     def forward(self, input_sequence, forecast_steps):
         # Phase 1: Process input sequence
-        gru_output, hidden = self.gru(input_sequence)
-        
+        lstm_output, hidden = self.lstm(input_sequence)
+
         # Phase 2: Autoregressive forecasting
         forecasts = []
         current_hidden = hidden
-        
+
         # Start with the first prediction from the final hidden state
-        first_prediction = self.projection(gru_output[:, -1:, :])  # (B, 1, D)
+        first_prediction = self.projection(lstm_output[:, -1:, :])  # (B, 1, D)
         forecasts.append(first_prediction.squeeze(1))  # (B, D)
         current_input = first_prediction  # (B, 1, D)
-        
+
         for _ in range(forecast_steps - 1):  # Note: forecast_steps - 1
-            # Feed the current prediction to the GRU
-            gru_output_step, current_hidden = self.gru(current_input, current_hidden)
-            prediction = self.projection(gru_output_step)  # (B, 1, D)
+            # Feed the current prediction to the LSTM
+            lstm_output_step, current_hidden = self.lstm(current_input, current_hidden)
+            prediction = self.projection(lstm_output_step)  # (B, 1, D)
             forecasts.append(prediction.squeeze(1))
             # Next step uses the prediction
             current_input = prediction
-            
+
         return torch.stack(forecasts, dim=1)
 
 class NDD(NDDBase):
     """
-    NDD (Neural Dynamic Divergence) - Multi-step GRU model without skip connections or input stacks.
+    NDD (Neural Dynamic Divergence) - Multi-step LSTM model without skip connections or input stacks.
     Simplified version of GIN.
     """
 
@@ -99,11 +99,11 @@ class NDD(NDDBase):
         return self._prepare_multistep_sequences(data, self.sequence_length, self.forecast_length, ret_positions)
 
     def fit(self, X):
-        """Fit the GRU forecasting model using shared training loop"""
+        """Fit the LSTM forecasting model using shared training loop"""
         input_size = X.shape[1]
-        
+
         # Initialize model
-        self.model = MultiStepGRU(
+        self.model = MultiStepLSTM(
             input_size=input_size,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers

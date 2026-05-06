@@ -259,7 +259,7 @@ def count_parameters(model):
 
 class ONCET(DynaSDBase):
     """
-    ONCET (OjemanN's Convolutional neural nETwork for seizure detection) model.
+    ONCET (ONset detection ConvNet) — pretrained dilated CNN classifier for seizure detection.
     """
     def __init__(self, checkpoint_path = None, config_path = None, w_size=1, w_stride=0.5, fs=256, batch_size=2048, verbose=False, device='cuda' if torch.cuda.is_available() else 'cpu', **kwargs):
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, **kwargs)

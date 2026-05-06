@@ -172,7 +172,7 @@ class LinearForecaster(nn.Module):
 
 class LiNDDA(NDDBase):
     """
-    LiNDDA (Linear Neural Dynamic Divergence Analysis) - Linear regression benchmark for GIN.
+    LiNDDA (Linear Neural Dynamic Divergence Approximation) - Linear regression benchmark for GIN.
     Uses simple linear regression for multi-step forecasting instead of RNNs.
     """
 

@@ -1,4 +1,4 @@
-"""Internals tests for ``DynaSD.NDDBase`` sequence-prep, aggregation, and cache."""
+"""Internals tests for ``dynasd.NDDBase`` sequence-prep, aggregation, and cache."""
 
 import sys
 import warnings

@@ -2,7 +2,11 @@
 
 # DynaSD
 
-Dynamic seizure detection models and utilities for iEEG analysis.
+**Dyna**mic **S**eizure **D**etection models and utilities for iEEG analysis,
+based on work described in the preprint [*Unsupervised seizure annotation
+and detection with neural dynamic divergence*][preprint].
+
+[preprint]: https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1
 
 This package provides multiple detector implementations under a shared
 `fit` → `forward` → `get_onset_and_spread` API, including neural dynamic
@@ -23,7 +27,7 @@ package. API and packaging are stabilizing, with emphasis on:
 ### Core install
 
 ```bash
-pip install DynaSD
+pip install dynasd
 ```
 
 ### Optional model extras
@@ -31,9 +35,9 @@ pip install DynaSD
 Install only the dependencies needed for the model family you use:
 
 ```bash
-pip install "DynaSD[torch]"        # PyTorch-backed detectors (NDD, GIN, LiNDDA, ONCET)
-pip install "DynaSD[tensorflow]"   # WaveNet/TensorFlow-backed detector (WVNT)
-pip install "DynaSD[viz]"          # matplotlib for plotting
+pip install "dynasd[torch]"        # PyTorch-backed detectors (NDD, GIN, LiNDDA, ONCET)
+pip install "dynasd[tensorflow]"   # WaveNet/TensorFlow-backed detector (WVNT)
+pip install "dynasd[viz]"          # matplotlib for plotting
 ```
 
 ### Development install
@@ -52,22 +56,22 @@ End-to-end walkthrough on a bundled synthetic seizure recording lives in
 pipeline:
 
 ```python
-from DynaSD import HFER, load_example_seizure
+from dynasd import ABSSLP, load_example_seizure
 
 example = load_example_seizure()           # 60s synthetic iEEG, 8ch, fs=256
 X, fs = example.signal, example.fs
 
-model = HFER(fs=fs, w_size=1.0, w_stride=0.5)
-model.fit(X.iloc[: int(example.seizure_start_sec * fs)])   # baseline only
+model = ABSSLP(fs=fs, w_size=1.0, w_stride=0.5)
+model.fit(X.iloc[: int((example.seizure_start_sec - 10) * fs)])   # 20s of baseline
 
-sz_prob = model.forward(X)                 # window-by-channel detector scores
+sz_prob = model(X)                 # window-by-channel detector scores
 onsets = model.get_onset_and_spread(
-    sz_prob, threshold=8.0,
+    sz_prob, threshold=150.0,
     filter_w=10.0, rwin_size=5.0, rwin_req=4.0,
 )                                          # per-channel onset times in seconds
 ```
 
-Every detector class follows the same interface; swap `HFER` for any of
+Every detector class follows the same interface; swap `ABSSLP` for any of
 the available models below. See the spec at
 [`docs/spec_windowing_smoothing.md`](docs/spec_windowing_smoothing.md)
 for the windowing/smoothing/spread math.
@@ -94,15 +98,15 @@ ONCET(checkpoint_path="/abs/path/to/best_model.pth",
 
 ## Available models
 
-Exported from `DynaSD`:
+Exported from `dynasd`:
 
 | Class | Method | Extra |
 |---|---|---|
 | `ABSSLP` | Mean abs first difference | core |
 | `HFER` | High-to-low band-power ratio | core |
 | `IMPRINT` | Mahalanobis-distance MAD score | core |
-| `NDD` | Neural Dynamic Divergence (LSTM) | `[torch]` |
-| `GIN` | GRU NDD | `[torch]` |
+| `NDD` | Neural Dynamic Divergence (multi-step LSTM) | `[torch]` |
+| `GIN` | NDD with residual GRU connections | `[torch]` |
 | `LiNDDA` | Linear NDD Approximation | `[torch]` |
 | `ONCET` | Pretrained dilated CNN classifier | `[torch]` |
 | `WVNT` | Pretrained WaveNet classifier | `[tensorflow]` |
@@ -130,3 +134,29 @@ If you want to add a new detector, start with:
 
 If DynaSD is useful in your work, please cite the project and reach out
 for collaboration: `wojemann@seas.upenn.edu`.
+
+> Ojemann WKS, Xu Z, Shi H, Walsh K, Pattnaik A, Sinha N, et al.
+> Unsupervised seizure annotation and detection with neural dynamic
+> divergence. *medRxiv*. Posted online February 17, 2026.
+> doi:10.64898/2026.02.15.26346325
+
+BibTeX:
+
+```bibtex
+@article{ojemann2026dynasd,
+  title   = {Unsupervised seizure annotation and detection with neural dynamic divergence},
+  author  = {Ojemann, William K. S. and Xu, Zhongchuan and Shi, Haoer
+             and Walsh, Katie and Pattnaik, Akash and Sinha, Nishant
+             and Lavelle, Sarah and Aguila, Carlos and Gallagher, Ryan
+             and Revell, Andrew and LaRocque, Joshua J. and Korzun, Jacob
+             and Kulick-Soper, Catherine V. and Zhou, Daniel J.
+             and Galer, Peter D. and Sinha, Saurabh R.
+             and Shinohara, Russell T. and Davis, Kathryn A.
+             and Litt, Brian and Conrad, Erin C.},
+  journal = {medRxiv},
+  year    = {2026},
+  doi     = {10.64898/2026.02.15.26346325},
+  url     = {https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1},
+  note    = {Preprint, posted 2026-02-17}
+}
+```
