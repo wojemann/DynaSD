@@ -95,7 +95,7 @@ jobs:
       - name: Pre-warm checkpoint cache from GitHub Release
         run: |
           python - <<'PY'
-          from DynaSD._downloads import fetch_checkpoint, CHECKPOINTS
+          from dynasd._downloads import fetch_checkpoint, CHECKPOINTS
           for name in CHECKPOINTS:
               fetch_checkpoint(name)
           PY
