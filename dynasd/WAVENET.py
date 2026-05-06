@@ -101,7 +101,7 @@ class WVNT(DynaSDBase):
         if self.model_path is None:
             from ._downloads import fetch_checkpoint
             self.model_path = str(fetch_checkpoint(
-                "WaveNet/v111.hdf5", verbose=verbose
+                "WVNT/v111.hdf5", verbose=verbose
             ))
        
         try:

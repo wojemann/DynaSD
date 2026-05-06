@@ -53,8 +53,8 @@ CHECKPOINTS: dict[str, _Checkpoint] = {
         sha256="0481bbcc0e69c855112e5aa7d56737725f05662dd35162952d63983ca5e07dda",
         size_bytes=1_843,
     ),
-    "WaveNet/v111.hdf5": _Checkpoint(
-        relpath="WaveNet/v111.hdf5",
+    "WVNT/v111.hdf5": _Checkpoint(
+        relpath="WVNT/v111.hdf5",
         url=f"{_RELEASE_BASE}/v111.hdf5",
         sha256="6331140afdc75100c101e9596bf06f1365d5bfca30e53fb361c6af3701a795ea",
         size_bytes=7_447_104,

@@ -103,7 +103,7 @@ Exported from `dynasd`:
 | Class | Method | Extra |
 |---|---|---|
 | `ABSSLP` | Mean abs first difference | core |
-| `HFER` | High-to-low band-power ratio | core |
+| `HFER` | High frequency energy ratio | core |
 | `IMPRINT` | Mahalanobis-distance MAD score | core |
 | `NDD` | Neural Dynamic Divergence (multi-step LSTM) | `[torch]` |
 | `GIN` | NDD with residual GRU connections | `[torch]` |
