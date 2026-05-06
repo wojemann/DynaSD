@@ -536,6 +536,118 @@ def test_s74_smoothing_step_at_midpoint_threshold_default_params_zero_net_shift(
     assert sz_idxs["ch0"].iloc[0] == k
 
 
+# Multi-channel pipeline behavior. ``get_onset_and_spread`` runs
+# smoothing/threshold/spread independently per channel; these tests
+# pin per-channel independence simultaneously with the bias formula.
+# Some channels carry a clean planted step (window-aligned, seizing);
+# the rest stay all zeros (never crossing threshold) and must come
+# back as NaN. This is the "synthetic seizure classification" path the
+# user prefers over a full detector-driven planted-seizure suite —
+# detector feature noise is bypassed entirely, isolating the
+# smoothing/threshold/spread chain itself.
+
+@pytest.mark.parametrize(
+    "fs,w_size,w_stride,n_windows,planted_idx,"
+    "filter_w,rwin_size,rwin_req,planted,unplanted",
+    [
+        # (a) No smoothing (filter_w_idx=1), w_stride=1, mixed planted/unplanted.
+        (1, 1.0, 1.0, 100, 40, 1.0, 5.0, 4.0,
+         ["ch0", "ch2"], ["ch1", "ch3"]),
+        # (b) Odd filter parity (filter_w_idx=11), no parity offset.
+        (1, 1.0, 1.0, 100, 50, 11.0, 5.0, 4.0,
+         ["ch0", "ch1", "ch2"], ["ch3"]),
+        # (c) Even filter parity (filter_w_idx=10), +1 offset cancels -1 spread.
+        (1, 1.0, 1.0, 100, 50, 10.0, 5.0, 4.0,
+         ["ch0", "ch1"], ["ch2", "ch3"]),
+        # (d) Spread shift = 0 (rwin_req == rwin_size); only parity offset remains.
+        (1, 1.0, 1.0, 100, 50, 10.0, 5.0, 5.0,
+         ["ch0"], ["ch1", "ch2", "ch3"]),
+        # (e) Finer stride (fs=2, w_stride=0.5); the same fs=256 default-
+        # params shift in seconds (filter_w_idx=19 odd, spread shift -1.0s).
+        (2, 1.0, 0.5, 119, 60, 10.0, 5.0, 4.0,
+         ["ch0", "ch1"], ["ch2", "ch3"]),
+        # (f) All channels seizing (every column planted) — also a sanity
+        # check that no unplanted column-sorting branch is needed.
+        (1, 1.0, 1.0, 100, 50, 10.0, 5.0, 4.0,
+         ["ch0", "ch1", "ch2", "ch3"], []),
+        # (g) No channels seizing (all zeros across the board) — every
+        # output column must be NaN, no exception raised.
+        (1, 1.0, 1.0, 100, 50, 10.0, 5.0, 4.0,
+         [], ["ch0", "ch1", "ch2", "ch3"]),
+    ],
+)
+def test_s74_multichannel_planted_step_threshold_0_5(
+    fs, w_size, w_stride, n_windows, planted_idx,
+    filter_w, rwin_size, rwin_req, planted, unplanted,
+):
+    """For a time-indexed multi-channel ``sz_prob`` with a clean step at
+    ``planted_idx`` on the ``planted`` channels and zeros on the
+    ``unplanted`` channels at threshold ``0.5``:
+
+    - each planted channel's onset matches the corrected R3 formula
+      exactly (in seconds, since the input is time-indexed);
+    - each unplanted channel comes back as NaN;
+    - all input columns are present in the output DataFrame (channel
+      ordering may differ — the implementation sorts seized channels
+      first then appends undetected — so we lookup by name).
+    """
+    base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
+    columns = planted + unplanted
+    data = np.zeros((n_windows, len(columns)))
+    for ch in planted:
+        data[planted_idx:, columns.index(ch)] = 1.0
+
+    # Time-indexed sz_prob so the Phase-F path returns onsets in seconds.
+    win_samples = int(round(w_size * fs))
+    step_samples = int(round(w_stride * fs))
+    n_samples = (n_windows - 1) * step_samples + win_samples
+    time_index = base.get_win_index(n_samples)
+    assert len(time_index) == n_windows, (
+        f"window-grid sanity: get_win_index({n_samples}) -> "
+        f"{len(time_index)} windows, expected {n_windows}"
+    )
+    sz_prob = pd.DataFrame(data, columns=columns, index=time_index)
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=filter_w, rwin_size=rwin_size, rwin_req=rwin_req,
+    )
+
+    # Expected onset from corrected R3 formula (spec § 7.4).
+    filter_w_idx = _seconds_to_idx(filter_w, w_size, w_stride)
+    rwin_size_idx = _seconds_to_idx(rwin_size, w_size, w_stride)
+    rwin_req_idx = _seconds_to_idx(rwin_req, w_size, w_stride)
+    shift_windows = _filter_offset(filter_w_idx) - (rwin_size_idx - rwin_req_idx)
+    expected_onset_seconds = (planted_idx + shift_windows) * w_stride
+
+    # Every input channel appears in the output (some may be NaN).
+    for ch in columns:
+        assert ch in sz_idxs.columns, f"missing channel {ch} in onset DataFrame"
+
+    # Planted channels: detected onset == R3 prediction, exact.
+    for ch in planted:
+        onset = sz_idxs[ch].iloc[0]
+        assert not pd.isna(onset), (
+            f"planted channel {ch} produced NaN onset; smoothing/spread "
+            f"chain failed to detect a clean planted step"
+        )
+        assert onset == pytest.approx(expected_onset_seconds), (
+            f"planted channel {ch}: expected {expected_onset_seconds}s, "
+            f"got {onset}s. R3 bias formula mismatch under multi-channel "
+            f"input — pipeline may be coupling channels."
+        )
+
+    # Unplanted channels: NaN. uniform_filter1d of all-zeros is all-zeros,
+    # so the channel never crosses threshold — no per-channel coupling
+    # from the planted channels should leak through.
+    for ch in unplanted:
+        onset = sz_idxs[ch].iloc[0]
+        assert pd.isna(onset), (
+            f"unplanted channel {ch} produced false-positive onset {onset}; "
+            f"smoothing/threshold/spread chain leaked across channels"
+        )
+
+
 # ----------------------------------------------------------------------
 # Section 8: validation
 # ----------------------------------------------------------------------

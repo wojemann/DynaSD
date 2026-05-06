@@ -273,7 +273,13 @@ class IMPRINT(DynaSDBase):
         Imprint-based onset detection with dsosd-compatible interface
         """
         if not legacy:
-            threshold = self.get_threshold(sz_prob,method='pretrained')
+            # Only fall back to the pretrained threshold when the caller
+            # didn't supply one — otherwise respect their choice. The
+            # previous unconditional override silently clobbered any
+            # user-specified threshold and caused planted-seizure tests
+            # to detect on the wrong cutoff.
+            if threshold is None:
+                threshold = self.get_threshold(sz_prob, method='pretrained')
             return super().get_onset_and_spread(sz_prob,threshold,ret_smooth_mat,filter_w,rwin_size,rwin_req)
         
         # Use imprint parameters if not provided
