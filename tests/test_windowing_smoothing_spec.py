@@ -648,6 +648,146 @@ def test_s74_multichannel_planted_step_threshold_0_5(
         )
 
 
+# Realistic post-thresholded patterns. The detector's mathematical
+# correctness is one concern; the temporal accuracy of the
+# smoothing/spread chain on already-thresholded sz_clf inputs is a
+# separate one. These tests pin the chain's behavior on patterns that
+# look like a thresholded detector's output: sparse drop-outs (the
+# detector flickers below threshold occasionally), dense drop-outs
+# (insufficient sustained activity), brief pre-onset bursts, and
+# channel-cascading onsets. Filter_w is set to ``w_size`` (no further
+# smoothing) so the spread step's behavior is isolated — these inputs
+# are already binary and the detector has done the smoothing.
+
+def _build_time_indexed_sz_prob(base, n_windows, channel_data, channel_names):
+    """Build a time-indexed multi-channel sz_prob from per-channel
+    binary arrays. ``channel_data`` is a list of length-``n_windows``
+    int arrays, one per channel."""
+    win_samples = int(round(base.w_size * base.fs))
+    step_samples = int(round(base.w_stride * base.fs))
+    n_samples = (n_windows - 1) * step_samples + win_samples
+    time_index = base.get_win_index(n_samples)
+    data = np.column_stack(channel_data).astype(float)
+    return pd.DataFrame(data, columns=channel_names, index=time_index)
+
+
+def test_s74_sparse_dropouts_still_detect_per_formula():
+    """A 1-of-rwin_size_idx drop-out pattern (one zero every 5 windows
+    starting at the planted onset) keeps the sliding sum exactly at
+    rwin_req_idx — the detection lands at the same place as a clean
+    step would, because rwin_req is the threshold the sum must
+    >reach<, not exceed."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    k = 50
+    pattern = np.zeros(n, dtype=int)
+    # 1s from k onward with one dropout every 5th window (positions
+    # k+4, k+9, k+14, ...). Sliding sum over any 5-window stretch
+    # inside the seizure portion = 4 ≥ rwin_req_idx (4). Crucially
+    # the windows at the leading edge of detection (i ∈ [k-1, k+0])
+    # also have sum exactly 4 because the dropout always falls inside
+    # the window once it appears.
+    for i in range(k, n):
+        pattern[i] = 1 if (i - k) % 5 != 4 else 0
+    sz_prob = _build_time_indexed_sz_prob(base, n, [pattern], ["ch0"])
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0, rwin_size=5.0, rwin_req=4.0,
+    )
+    expected = k - (_seconds_to_idx(5.0, 1.0, 1.0) - _seconds_to_idx(4.0, 1.0, 1.0))
+    assert sz_idxs["ch0"].iloc[0] == expected
+
+
+def test_s74_dense_dropouts_fail_rwin_req():
+    """An alternating 1,0,1,0,... pattern after the planted onset
+    yields sliding sum ≤ 3 in every 5-window stretch, which never
+    reaches rwin_req_idx=4. The channel is never flagged → NaN.
+    Pins that rwin_req is enforced, not approximated."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    k = 50
+    pattern = np.zeros(n, dtype=int)
+    for i in range(k, n):
+        pattern[i] = (i - k) % 2  # alternating 0,1,0,1,...
+    sz_prob = _build_time_indexed_sz_prob(base, n, [pattern], ["ch0"])
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0, rwin_size=5.0, rwin_req=4.0,
+    )
+    assert pd.isna(sz_idxs["ch0"].iloc[0]), (
+        "alternating 1,0 pattern produced false-positive onset; rwin_req "
+        "filter failed to enforce sustained activity"
+    )
+
+
+def test_s74_brief_pre_onset_flicker_does_not_trigger_early():
+    """A brief 2-window burst at t0 followed by quiet, then sustained
+    activity at t1: the burst alone is too short to satisfy rwin_req
+    and gets filtered out. Detected onset lands at t1's spread-step
+    location, NOT t0. Pins that short transient bursts in the
+    thresholded signal don't masquerade as onsets."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    pattern = np.zeros(n, dtype=int)
+    pattern[30:32] = 1   # brief burst (2 windows)
+    pattern[49:] = 1     # sustained onset
+    sz_prob = _build_time_indexed_sz_prob(base, n, [pattern], ["ch0"])
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0, rwin_size=5.0, rwin_req=4.0,
+    )
+    expected = 49 - (_seconds_to_idx(5.0, 1.0, 1.0) - _seconds_to_idx(4.0, 1.0, 1.0))
+    onset = sz_idxs["ch0"].iloc[0]
+    assert onset == expected, (
+        f"brief 2-window flicker at t=30-31 caused detection at {onset}s; "
+        f"expected {expected}s (sustained onset at t=49 minus spread shift). "
+        "rwin_req filter is not suppressing brief sub-threshold bursts."
+    )
+
+
+def test_s74_cascading_onset_per_channel():
+    """Each channel has a different planted onset (a "spread cascade"
+    across channels). Detected onset on each channel matches that
+    channel's own planted location, independent of the others; a
+    never-seizing channel returns NaN. Pins that the per-channel
+    spread step truly runs per channel."""
+    base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
+    n = 100
+    planted_per_channel = {"ch0": 20, "ch1": 35, "ch2": 50}
+    quiet_channel = "ch3"
+
+    columns = list(planted_per_channel.keys()) + [quiet_channel]
+    arrays = []
+    for ch in columns:
+        a = np.zeros(n, dtype=int)
+        if ch in planted_per_channel:
+            a[planted_per_channel[ch]:] = 1
+        arrays.append(a)
+    sz_prob = _build_time_indexed_sz_prob(base, n, arrays, columns)
+
+    sz_idxs = base.get_onset_and_spread(
+        sz_prob, threshold=0.5,
+        filter_w=1.0, rwin_size=5.0, rwin_req=4.0,
+    )
+
+    spread_shift = _seconds_to_idx(5.0, 1.0, 1.0) - _seconds_to_idx(4.0, 1.0, 1.0)
+    for ch, planted_idx in planted_per_channel.items():
+        expected = planted_idx - spread_shift
+        onset = sz_idxs[ch].iloc[0]
+        assert onset == expected, (
+            f"cascading channel {ch}: planted at {planted_idx}, "
+            f"expected detected at {expected}, got {onset}. "
+            "Per-channel spread step is not independent."
+        )
+
+    assert pd.isna(sz_idxs[quiet_channel].iloc[0]), (
+        f"quiet channel {quiet_channel} produced false-positive onset"
+    )
+
+
 # ----------------------------------------------------------------------
 # Section 8: validation
 # ----------------------------------------------------------------------
