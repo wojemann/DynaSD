@@ -32,18 +32,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
 
-      - name: Run fast suite
+      - name: Run fast suite (torch-free)
         run: |
           pytest tests/test_windowing_smoothing_spec.py \
-                 tests/test_model_api_contract.py \
-                 tests/test_nddbase_internals.py \
                  tests/test_absslp_spec.py \
                  tests/test_hfer_spec.py \
                  tests/test_imprint_spec.py \
                  -v
 
-  torch:
-    name: NDD-family suite (py3.11, torch)
+  contract:
+    name: Contract + NDD-family suite (py3.11, torch + tensorflow)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,13 +51,21 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: Install package + torch + test extras
+      - name: Install package + all extras + test extras
+        # The contract suite parametrizes every detector in dynasd.__all__,
+        # which means the test module imports both torch- and tensorflow-
+        # backed classes at collection time. WVNT tests skip cleanly without
+        # checkpoints; NDD-family tests fit tiny models on CPU.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[torch,test]"
+          python -m pip install -e ".[all,test]"
 
-      - name: Run NDD-family spec
-        run: pytest tests/test_ndd_family_spec.py -v
+      - name: Run contract + internals + NDD-family
+        run: |
+          pytest tests/test_model_api_contract.py \
+                 tests/test_nddbase_internals.py \
+                 tests/test_ndd_family_spec.py \
+                 -v
 
   pretrained:
     name: Pretrained-checkpoint suite (py3.11)
