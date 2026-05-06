@@ -1,24 +1,4 @@
-"""
-Mathematical property tests for the IMPRINT detector.
-
-IMPRINT scores each window by a Mahalanobis-distance MAD score. Per
-window per channel, it builds a feature vector
-``log([line_length, energy, P_delta, P_theta, P_alpha, P_beta,
-P_low_gamma, P_high_gamma])``, computes the squared Mahalanobis
-distance against the cleaned preictal reference distribution for that
-channel, then converts to a robust z-score by subtracting the
-reference median and dividing by the reference scaled-MAD. Properties
-worth pinning:
-
-- on typical seeded noise the output is finite (no NaN/Inf), since the
-  reference scaled-MAD is non-degenerate;
-- a louder copy of the fit signal lands further from the reference
-  distribution and produces strictly larger MAD scores on average;
-- ``forward(X)`` is deterministic across repeated calls.
-
-Detection-quality / planted-seizure tests live in the deferred end-to-end
-suite (``docs/testing_strategy.md`` § 6).
-"""
+"""Mathematical property tests for the IMPRINT detector."""
 
 import sys
 import warnings
@@ -30,7 +10,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import IMPRINT
+from dynasd import IMPRINT
 
 
 FS = 256          # ≥ 240 Hz needed for IMPRINT's high_gamma band (70-120 Hz).
@@ -58,10 +38,7 @@ def _fit_and_forward(model, x_fit, x_score=None):
 
 
 def test_features_are_finite_on_seeded_noise():
-    """For seeded N(0, 1) input the cleaned-reference scaled-MAD is
-    non-degenerate, so every per-window MAD score must be finite. The
-    NaN-fallback at IMPRINT.py:145-147 only triggers when the
-    reference scaled-MAD vanishes — never on this fixture."""
+    """Every MAD score is finite on seeded N(0, 1) input."""
     model = IMPRINT(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
     x = _make_signal()
     out = _fit_and_forward(model, x)
@@ -69,12 +46,7 @@ def test_features_are_finite_on_seeded_noise():
 
 
 def test_anomalous_amplitude_increases_features():
-    """Scoring a louder copy of the fit signal yields strictly larger
-    mean MAD scores on every channel. The MAD score grows monotonically
-    with how far the test window's feature vector lands from the
-    cleaned preictal reference, and 5x amplitude shifts the
-    log-energy / log-line-length / log-band-power features uniformly
-    upward."""
+    """A louder copy of the fit signal yields strictly larger per-channel mean MAD scores."""
     x_baseline = _make_signal(amplitude=1.0, seed=0)
     x_loud = _make_signal(amplitude=5.0, seed=0)  # same seed → same shape
 
@@ -89,9 +61,7 @@ def test_anomalous_amplitude_increases_features():
 
 
 def test_repeated_forward_is_deterministic():
-    """forward(X) is a pure function once fit: Mahalanobis distance,
-    median, and MAD are all closed-form numpy operations with no
-    sources of randomness."""
+    """forward(X) is deterministic across repeated calls."""
     model = IMPRINT(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
     x = _make_signal()
     with warnings.catch_warnings():

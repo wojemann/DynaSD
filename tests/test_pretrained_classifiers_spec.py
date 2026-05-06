@@ -1,29 +1,7 @@
-"""
-Mathematical property tests for the pretrained-classifier detectors
-(``ONCET``, ``WVNT``).
+"""Mathematical property tests for pretrained-classifier detectors (ONCET, WVNT).
 
-Both load a binary seizure / non-seizure classifier from a pretrained
-checkpoint and emit a per-window seizure probability per channel.
-The shared properties worth pinning are bounded-output, determinism,
-and non-degeneracy:
-
-- every output value lies in ``[0, 1]`` (softmax / sigmoid
-  probability);
-- ``forward(X)`` is deterministic across repeated calls (ONCET runs
-  ``model.eval()`` at load to disable dropout; TF / Keras
-  ``model.predict`` is in inference mode by default);
-- on seeded random input the output is not constant — the model
-  produces a meaningful range of scores rather than a single
-  collapsed value, which would indicate a broken checkpoint or a
-  preprocessing mismatch.
-
-Tests skip cleanly if the checkpoints aren't present locally; set the
-``DYNASD_ONCET_CHECKPOINT`` / ``DYNASD_ONCET_CONFIG`` /
-``DYNASD_WVNT_CHECKPOINT`` environment variables to override the
-default developer-machine paths.
-
-Detection-quality / planted-seizure tests live in the deferred end-to-end
-suite (``docs/testing_strategy.md`` § 6).
+Tests skip if checkpoints are unavailable; override paths via
+DYNASD_ONCET_CHECKPOINT / DYNASD_ONCET_CONFIG / DYNASD_WVNT_CHECKPOINT.
 """
 
 import os
@@ -37,7 +15,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ONCET, WVNT
+from dynasd import ONCET, WVNT
 
 
 N_SECONDS = 30
@@ -73,8 +51,7 @@ def _build_oncet():
             f"{_ONCET_CONFIG}. Set DYNASD_ONCET_CHECKPOINT / "
             f"DYNASD_ONCET_CONFIG to override."
         )
-    # ONCET trained at 256 Hz on 1-second windows; pin CPU for
-    # cross-machine reproducibility.
+    # ONCET trained at 256 Hz / 1s windows; pin CPU for reproducibility.
     return ONCET(
         fs=256, w_size=1.0, w_stride=0.5,
         checkpoint_path=_ONCET_CHECKPOINT,
@@ -114,8 +91,7 @@ def _fit_and_forward(model, x):
 
 @pytest.mark.parametrize("build", MODELS)
 def test_output_is_bounded_to_unit_interval(build):
-    """Both detectors expose a class-1 probability per window — softmax
-    (ONCET) or sigmoid (WVNT). Output must lie in ``[0, 1]``."""
+    """Per-window class-1 probability lies in [0, 1]."""
     model = build()
     x = _make_signal(fs=model.fs)
     out = _fit_and_forward(model, x)
@@ -126,10 +102,7 @@ def test_output_is_bounded_to_unit_interval(build):
 
 @pytest.mark.parametrize("build", MODELS)
 def test_repeated_forward_is_deterministic(build):
-    """Inference must be deterministic across repeated calls. ONCET
-    achieves this via ``model.eval()`` at construction (disables
-    Dropout / BatchNorm running statistics updates); Keras
-    ``model.predict`` is deterministic in inference mode by default."""
+    """forward(X) is deterministic across repeated calls."""
     model = build()
     x = _make_signal(fs=model.fs)
     with warnings.catch_warnings():
@@ -142,11 +115,7 @@ def test_repeated_forward_is_deterministic(build):
 
 @pytest.mark.parametrize("build", MODELS)
 def test_output_is_not_constant(build):
-    """A working classifier must produce some spread across windows on
-    seeded random input. A constant output would indicate a broken
-    checkpoint, a stuck preprocessing path, or a saturated
-    activation — none of which the bounded-output test alone would
-    catch."""
+    """Output has non-trivial spread across windows on random input."""
     model = build()
     x = _make_signal(fs=model.fs)
     out = _fit_and_forward(model, x)

@@ -1,17 +1,17 @@
 # Windowing & Smoothing Spec
 
 Status: **locked.** All design decisions resolved. This document is the source
-of truth that tests must validate against and that code in `DynaSD/utils.py`
-and `DynaSD/base.py` must conform to.
+of truth that tests must validate against and that code in `dynasd/utils.py`
+and `dynasd/base.py` must conform to.
 
 Scope:
-- `DynaSD/utils.py::num_wins`
-- `DynaSD/utils.py::MovingWinClips`
-- `DynaSD/base.py::DynaSDBase.get_win_times`
-- `DynaSD/base.py::DynaSDBase.get_onset_and_spread`
+- `dynasd/utils.py::num_wins`
+- `dynasd/utils.py::MovingWinClips`
+- `dynasd/base.py::DynaSDBase.get_win_times`
+- `dynasd/base.py::DynaSDBase.get_onset_and_spread`
 
 Rationale and the alternatives considered for each decision are recorded in
-**Appendix A** (decisions R1–R6).
+**Appendix A**.
 
 ---
 
@@ -86,7 +86,7 @@ window `i`'s end and window `i+1`'s start.
 
 ## 5. Window timestamp
 
-Window `i` is timestamped by its **start time** (R2):
+Window `i` is timestamped by its **start time**:
 
 ```
 t_i = i * step_samples / fs                # seconds
@@ -106,7 +106,7 @@ the requested stride; the realized value is reported, never the requested one.
   the same values wrapped as a labeled :class:`pandas.Index`, suitable for
   use as the row index of inference DataFrames.
 
-**Inference DataFrames are time-indexed (Phase F).** Every detector's
+**Inference DataFrames are time-indexed.** Every detector's
 ``forward(X)`` returns a DataFrame whose row index is
 ``self.get_win_index(len(X))`` — i.e. the realized window-start times in
 seconds with index name ``"t_sec"``. Concretely, ``out.iloc[i]`` is the
@@ -115,8 +115,8 @@ the window starting 5.0 seconds into the input.
 
 The choice of start (vs. center vs. end) is **acausal** and deliberate: it
 gives the earliest moment from which a window's data could detect activity,
-serving the package's "earliest-detection" intent. See R2 for the full
-rationale.
+serving the package's "earliest-detection" intent. See Appendix A
+("Window timestamps represent window START times") for the full rationale.
 
 ---
 
@@ -158,8 +158,8 @@ seconds-of-activity semantics should set `w_size = w_stride`.
 - `sz_prob`: `pandas.DataFrame` of shape `(n_windows, n_channels)`. Each row
   is the per-channel seizure probability for one window. The row index is
   preserved through the pipeline; when callers feed the time-indexed output
-  of ``model.forward(X)`` (Phase F), the resulting onset times come out in
-  seconds directly.
+  of ``model.forward(X)``, the resulting onset times come out in seconds
+  directly.
 - `threshold`: scalar (or class attribute `self.threshold`).
 - `filter_w` (default `10.0`): smoothing window in seconds.
 - `rwin_size` (default `5.0`): spread-detection lookahead in seconds.
@@ -212,7 +212,7 @@ original length by appending the **last valid row** at the END,
   all zeros.
 
 The value of `onset[col]` is whatever ``sz_prob`` was indexed by. When
-callers feed the time-indexed output of ``model.forward(X)`` (Phase F),
+callers feed the time-indexed output of ``model.forward(X)``,
 ``idxmax`` returns the onset time in **seconds** directly — no further
 ``* step_samples / fs`` conversion required. When callers pass a
 positional-indexed DataFrame, ``idxmax`` returns a window index, and
@@ -223,7 +223,7 @@ the caller multiplies by ``step_samples / fs`` if seconds are wanted.
 - Default: `sz_idxs_df` — a single-row DataFrame whose columns are channel
   names and values are onset labels (NaN for non-seizing channels). The
   label type matches the row index of the input ``sz_prob``: time in
-  seconds when the input is time-indexed (the standard case post-Phase F),
+  seconds when the input is time-indexed (the standard case),
   or window indices when the input is positional.
 - If `ret_smooth_mat=True`: also return `sz_clf_ff` — the post-spread,
   post-padding matrix, indexed by the same labels as ``sz_prob`` (time in
@@ -420,7 +420,7 @@ considered. They are the historical record of *why* the contracts above are
 what they are. Tests are written against the contracts in sections 1–11, not
 directly against this appendix.
 
-### R1. Spread convolution padding: pad at END
+### Spread convolution padding: pad at END
 
 The spread-detection logic in `get_onset_and_spread` convolves the binary
 `sz_clf` matrix with a length-`rwin_size_idx` kernel of ones in `mode='valid'`,
@@ -448,7 +448,7 @@ seizures near the end of the recording, etc.). Downstream consumers must
 account for this offset explicitly when interpreting onset times in absolute
 seconds.
 
-### R2. Window timestamps represent window START times
+### Window timestamps represent window START times
 
 `get_win_times(n_samples)` returns `np.arange(n_windows) * w_stride`. Window
 index `i` corresponds to absolute time `t_i = i * w_stride` seconds, which is
@@ -473,13 +473,13 @@ causality for earliest-detection semantics, and consumers must understand
 this when interpreting onset times in absolute seconds.
 
 Combined with the spread-detection forward-looking bias documented in
-R3, reported onset times sit a small number of windows away from the
-first individual above-threshold sample (typically zero net shift when
-threshold is chosen at the smoothed-step midpoint, and a few windows of
-forward-looking shift otherwise). This is a deliberate property of the
-pipeline, not a bug.
+the next section, reported onset times sit a small number of windows
+away from the first individual above-threshold sample (typically zero
+net shift when threshold is chosen at the smoothed-step midpoint, and a
+few windows of forward-looking shift otherwise). This is a deliberate
+property of the pipeline, not a bug.
 
-### R3. Full window-index → absolute-seconds chain
+### Full window-index → absolute-seconds chain
 
 This is the canonical walkthrough that all of `get_onset_and_spread`'s
 behavior must follow. Sections 7 and 9 of the contract above codify it. Tests
@@ -512,15 +512,16 @@ With default parameters (`w_size = 1s`, `w_stride = 1s`,
 - spread shift = `rwin_size_idx − rwin_req_idx` = 1 window earlier
 - **net total = +1 − 1 = 0 windows: detected onset == planted onset**
 
-Plus the windowing convention itself (R2) means each window's timestamp
-already refers to neural activity in the following `w_size` seconds.
+Plus the windowing convention itself (window timestamps are window
+START times) means each window's timestamp already refers to neural
+activity in the following `w_size` seconds.
 
 The spread shift is **intentional and forward-looking**. Downstream
 clinical/research consumers must apply their own offset if they need
 the timestamp of the first individual above-threshold sample rather
 than the forward-looking onset.
 
-### R4. Input shorter than one window: raise `ValueError`
+### Input shorter than one window: raise `ValueError`
 
 When `n_samples / fs < w_size`, the windowing helpers cannot produce any
 valid windows. All public windowing functions raise `ValueError` with a
@@ -532,7 +533,7 @@ the caller to handle invalid input explicitly. Batch consumers can wrap calls
 in `try/except ValueError`; the cost of that is one line and is preferable to
 silent downstream nonsense.
 
-### R5. Sample-count-first windowing math
+### Sample-count-first windowing math
 
 To eliminate per-window float drift in `MovingWinClips`, guarantee constant
 stride and constant window length, and ensure all windowing helpers agree
@@ -555,7 +556,7 @@ products would force users to round their parameters preemptively. A
 honestly, and users who want hard errors can elevate via
 `warnings.filterwarnings("error", ...)`.
 
-### R6. Seconds → window-count via start-and-end containment
+### Seconds → window-count via start-and-end containment
 
 The conversions of `filter_w`, `rwin_size`, and `rwin_req` from seconds to
 window counts use the rule:

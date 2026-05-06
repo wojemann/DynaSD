@@ -13,10 +13,10 @@ from pathlib import Path
 import sys
 import os
 
-# Add parent directory to path to import DynaSD modules
+# Add parent directory to path to import dynasd modules
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP
+from dynasd import ABSSLP
 from tests.data_generators import generate_test_datasets
 from tests.visualization_utils import create_comprehensive_model_plot
 

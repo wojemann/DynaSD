@@ -1,23 +1,4 @@
-"""
-Per-model API contract tests.
-
-Every detector class exported from ``DynaSD.__all__`` must satisfy the
-unified inference contract documented on
-:class:`DynaSD.base.DynaSDBase.forward`. These tests exercise that contract
-end-to-end on small seeded synthetic data:
-
-- constructor accepts ``fs``, ``w_size``, ``w_stride``;
-- ``forward(X)`` before ``fit(X)`` raises (loud, not silent);
-- ``fit(X)`` sets ``is_fitted = True``;
-- ``forward(X)`` returns a ``DataFrame`` of shape
-  ``(num_wins(len(X), fs, w_size, w_stride), n_channels)`` with channel-name
-  columns;
-- ``model(X)`` and ``model.forward(X)`` produce identical output.
-
-Detection-quality / numerical-correctness tests on simulated seizure
-fixtures are out of scope here; see ``docs/testing_strategy.md`` § 6 for
-the deferred end-to-end suite.
-"""
+"""Per-model API contract tests for every detector in ``DynaSD.__all__``."""
 
 import os
 import sys
@@ -30,21 +11,17 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, NDD, ONCET, WVNT
-from DynaSD.NDDBase import NDDBase
-from DynaSD.utils import num_wins
+from dynasd import ABSSLP, GIN, HFER, IMPRINT, LiNDDA, NDD, ONCET, WVNT
+from dynasd.NDDBase import NDDBase
+from dynasd.utils import num_wins
 
 
 # ----------------------------------------------------------------------
 # Fixture: small deterministic synthetic input
 # ----------------------------------------------------------------------
 
-# Default fs for the bulk of the contract suite. ≥ 240 Hz is needed for
-# IMPRINT's high_gamma band (70-120 Hz). WVNT carries its own 128 Hz
-# fixture because its pretrained TensorFlow checkpoint expects
-# 128-sample windows; signal generation in each test reads
-# (model.fs, model.w_size, model.w_stride) so per-model overrides
-# work without touching the test bodies.
+# Default fs ≥ 240 Hz so IMPRINT's high_gamma band (70-120 Hz) fits.
+# Per-model fs overrides (e.g. WVNT @ 128 Hz) are read from model.fs.
 FS = 256
 W_SIZE = 1.0
 W_STRIDE = 0.5
@@ -82,9 +59,7 @@ def _build_imprint():
     return IMPRINT(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
 
 
-# Shared lightweight config for the NN forecasters. Tiny hidden sizes and 2
-# epochs keep test wall-time small. ``sequence_length`` is the longest
-# parameter that affects fit-time; defaults across these models are 12-16.
+# Lightweight NDD-family config (tiny model, 2 epochs) for fast tests.
 _NN_BASE = dict(
     fs=FS,
     w_size=W_SIZE,
@@ -108,20 +83,14 @@ def _build_gin():
 
 
 def _build_lindda():
-    # LiNDDA's _boundary table only covers sequence_length ∈ {1..7}; using a
-    # different value raises KeyError in __init__. Override the shared
-    # _NN_BASE config for this model.
+    # LiNDDA's _boundary table only covers sequence_length ∈ {1..7}.
     return LiNDDA(**{**_NN_BASE, "sequence_length": 4, "forecast_length": 4})
 
 
 # ----------------------------------------------------------------------
-# Pretrained-checkpoint detectors (ONCET, WVNT)
+# Pretrained-checkpoint detectors (ONCET, WVNT). Skip if checkpoint missing;
+# override paths via DYNASD_ONCET_CHECKPOINT / DYNASD_WVNT_CHECKPOINT etc.
 # ----------------------------------------------------------------------
-#
-# These two require pretrained weights at construction time. The expected
-# paths default to the developer's local layout; environment variables
-# allow overriding for other developers. Tests skip cleanly when the
-# checkpoint is absent rather than failing on an unavailable file.
 
 _ONCET_CHECKPOINT = os.environ.get(
     "DYNASD_ONCET_CHECKPOINT",
@@ -144,8 +113,7 @@ def _build_oncet():
             f"{_ONCET_CONFIG}. Set DYNASD_ONCET_CHECKPOINT / "
             f"DYNASD_ONCET_CONFIG to override."
         )
-    # ONCET trained at 256 Hz on 1-second windows; force CPU for test
-    # determinism and reproducibility across machines.
+    # ONCET trained at 256 Hz / 1s windows; force CPU for determinism.
     return ONCET(
         fs=256, w_size=1.0, w_stride=0.5,
         checkpoint_path=_ONCET_CHECKPOINT,
@@ -162,10 +130,7 @@ def _build_wvnt():
             f"Set DYNASD_WVNT_CHECKPOINT to override."
         )
     pytest.importorskip("tensorflow")
-    # WVNT trained at 128 Hz on 1-second windows; the contract suite's
-    # generic fs=256 fixture would mis-shape the input, so this builder
-    # carries its own fs and the per-test signal is rebuilt from
-    # model.fs at call sites.
+    # WVNT trained at 128 Hz / 1s windows; per-test signal sized from model.fs.
     return WVNT(
         fs=128, w_size=1.0, w_stride=0.5,
         model_path=_WVNT_CHECKPOINT,
@@ -257,8 +222,7 @@ def test_forward_columns_match_input(build):
 
 @pytest.mark.parametrize("build", MODELS)
 def test_forward_index_is_realized_window_times(build):
-    """forward(X)'s row index is the realized window-start times in seconds
-    (spec section 5, Phase F). Equal to ``model.get_win_index(len(X))``."""
+    """forward(X)'s row index is realized window-start times in seconds."""
     model = build()
     signal = _signal_for(model)
     with warnings.catch_warnings():
@@ -288,13 +252,7 @@ def test_call_equals_forward(build):
 # ----------------------------------------------------------------------
 
 def test_nddbase_rejects_unknown_kwargs():
-    """An unexpected kwarg must raise a clear TypeError naming the offender,
-    not silently propagate to DynaSDBase.
-
-    Regression test for the pre-Phase-B bug where typos like ``train_win``
-    or ``num_chunnels=...`` would surface as a bewildering
-    ``DynaSDBase.__init__() got an unexpected keyword argument`` error.
-    """
+    """An unexpected kwarg raises TypeError naming the offender."""
     with pytest.raises(TypeError, match="unexpected keyword arguments"):
         NDD(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, totally_made_up_kwarg=42)
 
@@ -310,9 +268,7 @@ def test_nddbase_error_message_names_offender():
 
 
 def test_nddbase_error_message_names_actual_class():
-    """The TypeError attributes the failure to the user-facing class
-    (NDD, GIN, ...), not to NDDBase or DynaSDBase. This is what makes the
-    error actionable for users."""
+    """The TypeError names the user-facing class (e.g. NDD, GIN), not the base."""
     try:
         GIN(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, hidden_size=4,
             num_layers=1, num_stacks=1, foo=42)
@@ -323,8 +279,7 @@ def test_nddbase_error_message_names_actual_class():
 
 
 def test_nddbase_absorbs_known_training_params():
-    """Training-loop parameters (early_stopping, val_split, etc.) are
-    accepted as **kwargs and stored on the instance."""
+    """Training-loop kwargs (early_stopping, val_split, ...) are stored on the instance."""
     model = NDD(
         fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
         hidden_size=4, num_layers=1,
@@ -340,8 +295,7 @@ def test_nddbase_absorbs_known_training_params():
 
 
 def test_nddbase_passes_scaler_kwargs_to_base():
-    """Base-class kwargs (scaler_class, scaler_kwargs) thread through
-    NDDBase to DynaSDBase without being mistaken for training params."""
+    """Base-class kwargs (scaler_class, scaler_kwargs) thread through to DynaSDBase."""
     from sklearn.preprocessing import StandardScaler
 
     model = NDD(
@@ -356,9 +310,7 @@ def test_nddbase_passes_scaler_kwargs_to_base():
 
 
 def test_gin_unsupported_sequence_length_raises():
-    """GIN's pretrained _boundary table is sparse; unsupported
-    sequence_length values must raise ValueError naming the supported
-    set, not KeyError mid-construction."""
+    """Unsupported sequence_length raises ValueError, not KeyError."""
     with pytest.raises(ValueError, match="sequence_length"):
         GIN(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
             hidden_size=4, num_layers=1, num_stacks=1,
@@ -367,8 +319,7 @@ def test_gin_unsupported_sequence_length_raises():
 
 
 def test_lindda_unsupported_sequence_length_raises():
-    """LiNDDA's pretrained _boundary table covers only sequence_length
-    ∈ {1..7}; unsupported values must raise ValueError, not KeyError."""
+    """Unsupported sequence_length (outside {1..7}) raises ValueError, not KeyError."""
     with pytest.raises(ValueError, match="sequence_length"):
         LiNDDA(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE,
                sequence_length=99, forecast_length=1,
@@ -377,21 +328,12 @@ def test_lindda_unsupported_sequence_length_raises():
 
 @pytest.mark.parametrize("n_samples", [
     7680,   # 30.0000s — exact window boundary
-    7807,   # 30.4961s — between window boundaries (formerly produced 60 rows)
+    7807,   # 30.4961s — between window boundaries
     7808,   # 30.5000s — exact window boundary
-    7935,   # 30.9961s — between window boundaries (formerly produced 61 rows)
+    7935,   # 30.9961s — between window boundaries
 ])
 def test_nddbase_forward_length_matches_num_wins(n_samples):
-    """Regression: NDDBase.forward output must have exactly num_wins rows
-    regardless of whether ``len(X)`` falls on a window boundary.
-
-    Pre-fix, _aggregate_sequences_to_windows_mse computed its own window
-    grid from max(target_end_time) + forecast_length/fs, which could
-    produce one extra window for inputs whose length fell between
-    boundaries. The defensive guard in forward() then silently dropped
-    the time-index assignment, leaving a positional-indexed DataFrame
-    that violated the Phase F contract.
-    """
+    """NDDBase.forward output has exactly num_wins rows for any input length."""
     fs = 256
     rng = np.random.RandomState(0)
     X = pd.DataFrame(
@@ -420,10 +362,7 @@ def test_nddbase_forward_length_matches_num_wins(n_samples):
 
 
 def test_nddbase_is_abstract_for_forward():
-    """Instantiating NDDBase directly and calling forward() without a
-    fitted subclass-specific model must not silently return junk.
-    NDDBase requires sequence_length and a torch model to forward; without
-    those it should error rather than return garbage."""
+    """Bare NDDBase.forward() (no fitted subclass model) raises rather than returning junk."""
     base = NDDBase(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE, use_cuda=False)
     assert base.is_fitted is False
     rng = np.random.RandomState(0)

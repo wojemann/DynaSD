@@ -1,106 +1,115 @@
-# Testing Strategy (Release Draft)
+# Testing Strategy
 
-This document defines the testing goals for preparing DynaSD as a reliable shared package.
+This document defines the testing goals for DynaSD as a published
+package. The locked spec these tests validate against lives in
+[`spec_windowing_smoothing.md`](spec_windowing_smoothing.md).
 
 ## 1. Scope and priorities
 
 Primary priorities:
-1. Timing-focused unit tests for smoothing and windowing correctness.
-2. Dependency isolation (models importable with minimal extras).
-3. Baseline package quality checks expected in Python package releases.
 
-## 2. Timing functionality tests (smoothing and windowing)
+1. Mathematical correctness of windowing, smoothing, and onset/spread math.
+2. Per-model API contract (every class in `DynaSD.__all__` follows the
+   same `fit` → `forward` → `get_onset_and_spread` interface).
+3. Per-detector mathematical properties (non-negativity, scale
+   invariance, determinism, monotone behavior under amplitude shifts).
+4. Dependency isolation (core detectors importable with no heavy
+   frameworks installed).
 
-### Core timing checks
+## 2. Test layout
 
-For smoothing and windowing utilities, verify:
-- expected number of output windows for `(n_samples, fs, w_size, w_stride)`,
-- correct window start/stop indexing across boundary conditions,
-- monotonic and aligned window timestamps,
-- smoothing outputs have expected length and valid index alignment,
-- behavior under very short input, exact-window input, and partial-final-window input.
-
-### Required test inputs
-
-- Deterministic synthetic signals (seeded) covering:
-  - constant segments,
-  - step changes,
-  - impulse/noisy segments,
-  - short arrays and edge-length arrays.
-- Fixed fixtures committed for regression of timing/index behavior.
-
-### Pass/fail policy
-
-- No regressions in expected index/timestamp behavior for fixtures.
-- No regressions in window count calculations.
-- Timing-related helper outputs remain deterministic for identical inputs.
-
-## 3. Dependency isolation tests
-
-Each model should declare and enforce its dependency requirements cleanly.
-
-### Required checks
-
-- Core import smoke test with no optional extras:
-  - import package and core/base APIs.
-- Optional model import behavior:
-  - if dependency is missing, error message must be explicit and actionable,
-  - if dependency is installed, import and minimal inference path works.
-
-### CI strategy
-
-- Run separate CI jobs:
-  - `core` job (no heavy frameworks),
-  - `torch` extras job,
-  - `tensorflow` extras job,
-  - optional test job including `ieeg` for remote-data-related tests.
-
-## 4. Standard package quality tests
-
-- Unit tests for common utilities and shared base-class logic.
-- Integration tests for representative model inference paths.
-- API smoke tests for public constructors and core method signatures.
-- Serialization/roundtrip tests where applicable.
-- Test against supported Python versions (minimum + latest).
-
-## 5. Proposed test layout
+Flat layout under `tests/`:
 
 ```text
 tests/
-  unit/
-  integration/
-  dependency/
-  fixtures/
+  test_windowing_smoothing_spec.py     # spec § 2-10 closed-form coverage
+  test_model_api_contract.py           # shared fit/forward/index contract
+  test_nddbase_internals.py            # sequence prep + aggregator
+  test_<detector>_spec.py              # per-detector property tests
+  synthetic_data_generator.py          # neurodsp-based seizure fixtures
+  data_generators.py                   # legacy fixture helpers
+  visualization_utils.py               # legacy plotting helpers
 ```
 
-## 6. End-to-end behavioral tests on simulated signals (deferred)
+`test_absslp.py` and `test_ndd.py` are legacy unittest-style modules
+retained for backwards compatibility; new tests should follow the
+`test_*_spec.py` naming pattern.
 
-The unit tests covered in section 2 validate **mathematical correctness** of
-windowing, indexing, and smoothing math against synthetic inputs (e.g.
-`np.arange`, zeros, step changes, impulse trains). They do **not** validate
-that detection models produce sensible onset/spread results on realistic
-input.
+## 3. Spec coverage
 
-A separate test suite is required that runs each detection model end-to-end
-on a deterministic **simulated iEEG-like signal** with a planted seizure
-event of known onset time, channel coverage, and morphology. Each model that
-claims to detect such events must produce onset detections within a
-documented tolerance of the planted onset, on the planted channels, and not
-on the unplanted channels. This is the only way to validate that the
-windowing/smoothing/onset-detection chain produces clinically/scientifically
-meaningful output, not just mathematically correct output.
+Every section of [`spec_windowing_smoothing.md`](spec_windowing_smoothing.md)
+has at least one parametrized test in
+`tests/test_windowing_smoothing_spec.py`:
 
-**This work is deferred until after the code-consolidation pass is complete**
-(redundant logic removed, common base behavior unified across model classes).
-Testing detection behavior against an unstable target is wasted effort. Once
-consolidation lands, simulated-signal tests will be added under
-`tests/integration/`, with the simulated signal stored as a deterministic
-fixture or generated from a seeded synthesis routine, and tolerance bounds
-documented per model.
+- canonical sample counts (integer + non-integer products),
+- window count and indexing (boundary and partial-final-window cases),
+- realized window timestamps,
+- seconds → window-count conversion,
+- the smoothing → threshold → spread → onset pipeline including the
+  bias formula at threshold 0.5,
+- multi-channel independence and realistic post-thresholded patterns,
+- validation errors and cross-function invariants.
 
-## 7. Immediate next actions
+## 4. Per-model contract
 
-1. Migrate test entrypoint to `pytest` as canonical runner.
-2. Add timing helper assertions for window count/index/timestamp checks.
-3. Create first dependency-isolation smoke tests.
-4. Add CI matrix for core + extras.
+`tests/test_model_api_contract.py` parametrizes every detector exported
+from `DynaSD.__all__` and verifies:
+
+- constructor accepts `(fs, w_size, w_stride)`;
+- `forward` before `fit` raises;
+- `fit` sets `is_fitted = True`;
+- `forward(X)` returns a `(num_wins, n_channels)` DataFrame with
+  channel-name columns and a time-indexed row index named ``t_sec``;
+- `model(X)` equals `model.forward(X)`.
+
+NDD-family classes additionally pass kwarg-validation, training-param
+absorption, and `forward`-row-count regression tests.
+
+## 5. Per-detector mathematical properties
+
+Each detector has a `test_<detector>_spec.py` with a small set of
+mathematical-property tests appropriate to the algorithm:
+
+- `ABSSLP`: non-negativity, zero on per-window-constant input,
+  amplitude monotonicity.
+- `HFER`: non-negativity, scale invariance, high-band > low-band,
+  determinism.
+- `IMPRINT`: finiteness on seeded noise, amplitude monotonicity,
+  determinism.
+- `NDD` / `GIN` / `LiNDDA`: non-negativity, determinism (under fixed
+  torch seed), amplitude monotonicity.
+- `ONCET` / `WVNT`: bounded to `[0, 1]`, determinism, non-degeneracy.
+
+Pretrained-classifier tests skip cleanly if the checkpoint is
+unavailable; override paths via `DYNASD_ONCET_CHECKPOINT` /
+`DYNASD_ONCET_CONFIG` / `DYNASD_WVNT_CHECKPOINT`.
+
+## 6. Dependency isolation (planned)
+
+CI matrix should run separate jobs for:
+
+- `core`: no torch, no tensorflow.
+- `[torch]`: NDD-family + ONCET only.
+- `[tensorflow]`: WVNT only.
+- `[test]` (full): everything.
+
+Each job runs the import smoke test plus the subset of contract tests
+its extras unlock.
+
+## 7. Pass/fail policy
+
+- No regressions in spec or contract suites on every PR.
+- Per-detector property tests must pass under their declared extras.
+- Deterministic fixtures only; no flake from randomness.
+
+## 8. Running locally
+
+```bash
+# Closed-form spec + contract + internals (fast, no NN training).
+pytest tests/test_windowing_smoothing_spec.py \
+       tests/test_model_api_contract.py \
+       tests/test_nddbase_internals.py
+
+# Full suite (includes NDD-family fits + pretrained-checkpoint tests).
+pytest
+```

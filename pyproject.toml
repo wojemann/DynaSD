@@ -3,14 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "DynaSD"
+name = "dynasd"
 version = "0.1.0"
 description = "Dynamic seizure detection package"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 authors = [
-  { name = "DynaSD contributors" }
+  { name = "William Ojemann", email = "wojemann@seas.upenn.edu" },
+  { name = "Katherine Walsh" },
+  { name = "Haoer Shi" },
 ]
 keywords = ["seizure", "ieeg", "detection", "machine-learning", "neuroscience"]
 classifiers = [
@@ -19,7 +21,8 @@ classifiers = [
   "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Medical Science Apps.",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
-  "Operating System :: OS Independent"
+  "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License"
 ]
 dependencies = [
   "numpy>=1.23",
@@ -55,16 +58,24 @@ dev = [
   "ruff>=0.6",
   "mypy>=1.8"
 ]
+all = [
+  "dynasd[torch,tensorflow,viz]"
+]
 
 [project.urls]
 Homepage = "https://github.com/wojemann/DynaSD"
 Repository = "https://github.com/wojemann/DynaSD"
+Issues = "https://github.com/wojemann/DynaSD/issues"
+Changelog = "https://github.com/wojemann/DynaSD/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["DynaSD*"]
+include = ["dynasd*"]
+
+[tool.setuptools.package-data]
+"dynasd.data" = ["*.npz"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

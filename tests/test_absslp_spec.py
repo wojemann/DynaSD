@@ -1,20 +1,4 @@
-"""
-Mathematical property tests for the ABSSLP detector.
-
-ABSSLP scores each window by the mean absolute first difference of the
-robust-scaled signal, divided by the per-channel std of the fit data and
-multiplied by ``fs``. These tests pin down the basic invariants:
-
-- output is non-negative (the per-window quantity is a scaled mean of
-  absolute values),
-- a louder copy of the fit signal produces strictly larger feature values
-  on every channel,
-- a signal with no per-sample change (constant within each window) yields
-  zero feature values.
-
-Detection-quality / planted-seizure tests live in the deferred end-to-end
-suite (``docs/testing_strategy.md`` § 6).
-"""
+"""Mathematical property tests for the ABSSLP detector."""
 
 import sys
 import warnings
@@ -26,7 +10,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import ABSSLP
+from dynasd import ABSSLP
 
 
 FS = 128
@@ -60,14 +44,7 @@ def test_features_are_non_negative():
 
 
 def test_constant_signal_per_window_has_zero_features():
-    """When w_stride == w_size (non-overlapping windows) and the signal is a
-    step function that changes only at window boundaries, every window sees
-    a single level, so np.diff within each window is zero and ABSSLP
-    features are exactly zero.
-
-    Uses w_stride=w_size for this test specifically so no window straddles
-    a level boundary.
-    """
+    """A signal constant within each (non-overlapping) window yields zero features."""
     n_samples = FS * N_SECONDS
     levels = np.repeat(np.arange(N_SECONDS), FS).astype(float)
     data = np.tile(levels[:, None], (1, N_CHANNELS))
@@ -80,8 +57,7 @@ def test_constant_signal_per_window_has_zero_features():
 
 
 def test_higher_amplitude_increases_features():
-    """Scoring a louder copy of the fit signal yields strictly larger
-    features on every channel mean."""
+    """A louder copy of the fit signal yields strictly larger per-channel mean features."""
     x_baseline = _make_signal(amplitude=1.0, seed=0)
     x_loud = _make_signal(amplitude=3.0, seed=0)  # same seed → same shape
 

@@ -1,23 +1,4 @@
-"""
-Internals tests for ``DynaSD.NDDBase``.
-
-These pin down the implementation contract of the helpers that produce
-per-window forecast-error features for every NDD-family detector
-(``NDD``, ``GIN``, ``LiNDDA``):
-
-- :meth:`NDDBase._prepare_multistep_sequences_vectorized` — sliding-window
-  splitter that produces ``(input, target, positions)`` from a
-  ``DataFrame``;
-- :meth:`NDDBase._aggregate_sequences_to_windows_mse` — vectorized
-  aggregator that maps per-sequence MSE arrays into the canonical
-  ``(num_wins, n_channels)`` grid;
-- the content-hash sequence cache that backs the prepare-sequences
-  helper.
-
-Detection-quality tests live in the deferred end-to-end suite
-(``docs/testing_strategy.md`` § 6); the per-model API contract lives in
-``tests/test_model_api_contract.py``.
-"""
+"""Internals tests for ``DynaSD.NDDBase`` sequence-prep, aggregation, and cache."""
 
 import sys
 import warnings
@@ -30,20 +11,17 @@ import torch
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD.NDDBase import NDDBase
+from dynasd.NDDBase import NDDBase
 
 
 def _make_base(fs=256, w_size=1.0, w_stride=0.5):
-    """NDDBase with caching disabled and quiet output. The class is
-    abstract for ``fit`` / ``forward`` but its sequence-prep and
-    aggregation helpers are concrete and can be exercised directly."""
+    """NDDBase with caching disabled and quiet output."""
     return NDDBase(fs=fs, w_size=w_size, w_stride=w_stride,
                    use_cuda=False, verbose=False)
 
 
 def _ramp_data(n_samples, n_channels=2):
-    """Per-channel monotonic ramp ``data[i, c] = i * 1.0 + c * 0.001``.
-    The sub-channel offset makes channel mixups detectable."""
+    """Per-channel monotonic ramp; sub-channel offset makes channel mixups visible."""
     base = np.arange(n_samples, dtype=np.float64)[:, None]
     offsets = np.arange(n_channels, dtype=np.float64)[None, :] * 1e-3
     cols = [f"ch{i}" for i in range(n_channels)]
@@ -55,12 +33,10 @@ def _ramp_data(n_samples, n_channels=2):
 # ----------------------------------------------------------------------
 
 class TestPrepareMultistepSequences:
-    """Shape arithmetic and content correctness for the sliding-window
-    splitter. Cache-disabled for these tests so we exercise the canonical
-    code path."""
+    """Shape and content correctness for the sliding-window splitter."""
 
     def test_default_stride_is_forecast_length(self):
-        """When ``stride`` is omitted it defaults to ``forecast_length``."""
+        """Omitting ``stride`` defaults it to ``forecast_length``."""
         base = _make_base()
         data = _ramp_data(n_samples=20, n_channels=2)
         S, F = 4, 2
@@ -86,8 +62,7 @@ class TestPrepareMultistepSequences:
         assert tgt.shape == (5, F, 2)
 
     def test_exact_boundary_yields_single_sequence(self):
-        """``N == sequence_length + forecast_length`` is the smallest valid
-        case and produces exactly one sequence."""
+        """``N == sequence_length + forecast_length`` produces exactly one sequence."""
         base = _make_base()
         S, F = 4, 2
         data = _ramp_data(n_samples=S + F, n_channels=2)
@@ -99,8 +74,7 @@ class TestPrepareMultistepSequences:
         assert tgt.shape == (1, F, 2)
 
     def test_too_short_input_raises(self):
-        """``N < sequence_length + forecast_length`` produces zero
-        sequences, which the helper must reject loudly."""
+        """``N < sequence_length + forecast_length`` raises."""
         base = _make_base()
         S, F = 4, 2
         data = _ramp_data(n_samples=S + F - 1, n_channels=2)
@@ -111,12 +85,7 @@ class TestPrepareMultistepSequences:
             )
 
     def test_input_target_content_matches_slicing(self):
-        """For ramp data, ``input_data[i]`` must equal
-        ``data[i*stride : i*stride+S, :]`` and ``target_data[i]`` must
-        equal ``data[i*stride+S : i*stride+S+F, :]``. The helper casts
-        to ``torch.FloatTensor`` (float32) on the way out, so the
-        reference must also be in float32 for an exact comparison —
-        this pins both the content and the dtype convention."""
+        """``input_data[i]`` and ``target_data[i]`` are exact slices of the input (float32)."""
         base = _make_base()
         N, S, F = 20, 4, 2
         data = _ramp_data(n_samples=N, n_channels=2)
@@ -137,10 +106,7 @@ class TestPrepareMultistepSequences:
             np.testing.assert_array_equal(tgt_np[i], data_np[seq_start + S:seq_start + S + F])
 
     def test_seq_positions_indices_match_stride_arithmetic(self):
-        """``seq_positions[i]`` records ``input_start = i*stride``,
-        ``input_end = target_start = i*stride + S``,
-        ``target_end = i*stride + S + F``, and the corresponding times
-        in seconds (``index / fs``)."""
+        """``seq_positions[i]`` records correct sample indices and times in seconds."""
         fs = 256
         base = _make_base(fs=fs)
         N, S, F, stride = 20, 4, 2, 2
@@ -168,10 +134,7 @@ class TestPrepareMultistepSequences:
 # ----------------------------------------------------------------------
 
 class TestAggregateSequencesToWindowsMse:
-    """Hand-computed expected outputs on synthetic ``seq_results`` dicts.
-    Pins the ``seq_starts >= window_starts`` and strict
-    ``seq_ends < window_ends`` overlap rule at NDDBase.py:676-677, and
-    the ``sqrt(mean(seq_mse))`` aggregation at NDDBase.py:685."""
+    """Per-window aggregation: inclusive-start/strict-end overlap rule and sqrt(mean(mse))."""
 
     @staticmethod
     def _seq(start_t, end_t, mse_vec):
@@ -188,9 +151,7 @@ class TestAggregateSequencesToWindowsMse:
         return pd.DataFrame(np.zeros((n_samples, n_channels)), columns=cols)
 
     def test_window_grid_matches_get_win_times(self):
-        """The aggregator's window grid is exactly ``get_win_times(N)`` —
-        not a recomputed grid (Phase F.1 guarantee). Output row count
-        matches ``num_wins`` regardless of where sequences land."""
+        """Aggregator's window grid is exactly ``get_win_times(N)``."""
         fs, w_size, w_stride = 10, 1.0, 0.5
         base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
         N = 30
@@ -205,9 +166,7 @@ class TestAggregateSequencesToWindowsMse:
         np.testing.assert_allclose(base.window_start_times, expected_starts)
 
     def test_overlap_rule_inclusive_start_strict_end(self):
-        """A sequence with ``start == window_start`` is included; a
-        sequence with ``end == window_end`` is NOT (strict ``<``).
-        Pins the asymmetric overlap criterion."""
+        """Overlap rule: ``start >= window_start`` (inclusive), ``end < window_end`` (strict)."""
         fs, w_size, w_stride = 10, 1.0, 0.5
         base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
         X = self._make_X(30, 1)
@@ -227,8 +186,7 @@ class TestAggregateSequencesToWindowsMse:
         assert out.iloc[0, 0] == pytest.approx(2.0)  # sqrt(mean([4.0]))
 
     def test_window_mse_is_sqrt_of_mean(self):
-        """Per window: aggregate is ``sqrt(mean(seq_mse))`` over all
-        sequences whose interval falls inside the window."""
+        """Per-window aggregate is ``sqrt(mean(seq_mse))`` over overlapping sequences."""
         fs, w_size, w_stride = 10, 1.0, 0.5
         base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
         X = self._make_X(30, 2)
@@ -248,9 +206,7 @@ class TestAggregateSequencesToWindowsMse:
         assert np.all(np.isnan(out.iloc[1:].values))
 
     def test_multi_window_assignment_with_known_layout(self):
-        """End-to-end aggregation across multiple windows. Hand-picked
-        sequences whose target intervals overlap explicit window subsets
-        let us pin the (window_idx → sequence_indices) mapping."""
+        """Aggregation across multiple windows with hand-picked overlap layouts."""
         fs, w_size, w_stride = 10, 1.0, 0.5
         base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
         X = self._make_X(30, 2)
@@ -274,8 +230,7 @@ class TestAggregateSequencesToWindowsMse:
         np.testing.assert_allclose(out.iloc[4].values, np.sqrt([16.0, 1.0]))
 
     def test_unassigned_window_is_nan(self):
-        """Windows that no sequence overlaps emit NaN, not 0 or any
-        sentinel (preserves "no evidence" semantics for downstream)."""
+        """Windows with no overlapping sequence emit NaN (not 0 or other sentinel)."""
         fs, w_size, w_stride = 10, 1.0, 0.5
         base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
         X = self._make_X(30, 1)
@@ -286,8 +241,7 @@ class TestAggregateSequencesToWindowsMse:
         assert np.all(np.isnan(out.iloc[1:].values))
 
     def test_empty_seq_results_raises(self):
-        """No sequences at all is not a meaningful aggregation request and
-        must raise."""
+        """Empty seq_results raises."""
         base = _make_base()
         X = self._make_X(30, 1)
         with pytest.raises(ValueError, match="No sequences"):
@@ -299,14 +253,10 @@ class TestAggregateSequencesToWindowsMse:
 # ----------------------------------------------------------------------
 
 class TestSequenceCache:
-    """Content-addressed cache backing the prepare-sequences helper. The
-    cache is opt-in (``enable_sequence_cache``); shape-bearing parameters
-    (``sequence_length``, ``forecast_length``, ``stride``) and a
-    statistical fingerprint of the data are folded into the cache key."""
+    """Content-addressed cache for prepared sequences (opt-in)."""
 
     def test_cache_disabled_by_default(self):
-        """Constructor must leave caching off; otherwise repeated training
-        sessions could silently reuse stale features."""
+        """Caching is off by default."""
         base = _make_base()
         assert base._cache_enabled is False
         assert base._sequence_cache == {}
@@ -320,9 +270,7 @@ class TestSequenceCache:
         assert len(base._sequence_cache) == 1
 
     def test_repeat_call_returns_cached_object(self):
-        """Hitting the cache must return the cached tensors verbatim,
-        not recompute. Verified by mutating the cached entry to a
-        sentinel and watching the next call return the sentinel."""
+        """Cache hit returns the cached tensors verbatim (no recompute)."""
         base = _make_base()
         base.enable_sequence_cache()
         data = _ramp_data(n_samples=20)
@@ -343,8 +291,7 @@ class TestSequenceCache:
         torch.testing.assert_close(tgt2, sentinel_tgt)
 
     def test_different_sequence_length_is_cache_miss(self):
-        """``sequence_length`` is part of the cache key; changing it
-        forces recomputation under a separate entry."""
+        """``sequence_length`` is part of the cache key."""
         base = _make_base()
         base.enable_sequence_cache()
         data = _ramp_data(n_samples=20)
@@ -364,8 +311,7 @@ class TestSequenceCache:
         assert len(base._sequence_cache) == 2
 
     def test_different_stride_is_cache_miss(self):
-        """Explicit ``stride`` is part of the cache key (default
-        ``stride=forecast_length`` is folded in too)."""
+        """``stride`` is part of the cache key."""
         base = _make_base()
         base.enable_sequence_cache()
         data = _ramp_data(n_samples=20)
@@ -379,13 +325,10 @@ class TestSequenceCache:
         assert len(base._sequence_cache) == 2
 
     def test_mutated_input_data_is_cache_miss(self):
-        """The cache key incorporates a content fingerprint of the data;
-        meaningfully changing the data forces recomputation."""
+        """Cache key includes a content fingerprint; new data is a miss."""
         base = _make_base()
         base.enable_sequence_cache()
         data1 = _ramp_data(n_samples=20)
-        # Different content with same shape: large constant offset
-        # changes the statistical fingerprint reliably.
         data2 = data1 + 1000.0
 
         base._prepare_multistep_sequences_vectorized(data1, sequence_length=4, forecast_length=2)
@@ -393,8 +336,7 @@ class TestSequenceCache:
         assert len(base._sequence_cache) == 2
 
     def test_clear_sequence_cache_drops_entries(self):
-        """``clear_sequence_cache`` empties the cache but leaves caching
-        enabled (vs ``disable_sequence_cache``)."""
+        """``clear_sequence_cache`` empties entries but leaves caching enabled."""
         base = _make_base()
         base.enable_sequence_cache()
         data = _ramp_data(n_samples=20)

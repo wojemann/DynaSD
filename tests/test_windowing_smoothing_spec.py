@@ -1,14 +1,4 @@
-"""
-Tests for the windowing & smoothing spec.
-
-Reference: docs/spec_windowing_smoothing.md
-
-Each test corresponds to a bullet in section 11 of the spec. Tests are
-written against the locked contract; failures indicate either a code-spec
-divergence or a test bug. During the code-consolidation phase, tests for
-not-yet-implemented behavior (validation, UserWarnings, sample-count-first
-math) are expected to fail until the corresponding code lands.
-"""
+"""Tests for the windowing & smoothing spec (docs/spec_windowing_smoothing.md)."""
 
 import sys
 import warnings
@@ -20,8 +10,8 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD.utils import num_wins, moving_win_clips
-from DynaSD.base import DynaSDBase
+from dynasd.utils import num_wins, moving_win_clips
+from dynasd.base import DynaSDBase
 
 
 # ----------------------------------------------------------------------
@@ -215,8 +205,7 @@ def test_s5_integer_product_timestamps_exact():
 
 
 def test_s5_non_integer_per_step_drift_bound():
-    """Per-window stride deviation from the requested stride is bounded by
-    0.5/fs (spec section 5 — bound is per-step, not cumulative)."""
+    """Per-window stride deviation from requested stride is bounded by 0.5/fs."""
     fs = 512
     w_stride = 1.0 / 3
     base = _make_base(fs=fs, w_size=1.0, w_stride=w_stride)
@@ -324,9 +313,7 @@ def test_s7_non_seizing_channel_returns_nan_and_zero_column():
 
 
 def test_s7_onset_seconds_equal_index_times_step_over_fs():
-    """S7: when integer products, onset_time = onset_idx * w_stride exactly.
-    (Spec only specifies the window-index return; absolute-second conversion
-    is the consumer's responsibility, but we verify the relationship.)"""
+    """For integer products, onset_time = onset_idx * w_stride exactly."""
     fs = 1
     base = _make_base(fs=fs, w_size=1.0, w_stride=1.0)
     n = 100
@@ -343,14 +330,7 @@ def test_s7_onset_seconds_equal_index_times_step_over_fs():
 
 
 def test_s7_time_indexed_sz_prob_returns_onsets_in_seconds():
-    """When ``sz_prob`` is fed in time-indexed (the standard Phase-F path
-    produced by ``model.forward(X)``), ``idxmax`` returns onset times in
-    seconds directly — no manual window-index → seconds conversion needed.
-
-    Uses ``w_stride=2.0`` so that the time labels and positional indices
-    are numerically distinct (positional 19 vs. time 38.0); without that
-    distinction the test could be satisfied trivially by either contract.
-    """
+    """A time-indexed ``sz_prob`` returns onsets in seconds (not window indices)."""
     base = _make_base(fs=1, w_size=1.0, w_stride=2.0)
     n_rows = 51
     data = np.zeros((n_rows, 1))
@@ -376,9 +356,7 @@ def test_s7_time_indexed_sz_prob_returns_onsets_in_seconds():
 
 
 def test_s7_positional_sz_prob_returns_window_indices():
-    """When ``sz_prob`` has the default :class:`RangeIndex` (legacy /
-    manually constructed input), ``idxmax`` returns onset window indices
-    as integers — backward-compatible with pre-Phase-F callers."""
+    """A positional-indexed ``sz_prob`` returns onsets as integer window indices."""
     base = _make_base(fs=1, w_size=1.0, w_stride=2.0)
     n_rows = 51
     data = np.zeros((n_rows, 1))
@@ -403,8 +381,7 @@ def test_s7_positional_sz_prob_returns_window_indices():
 # ----------------------------------------------------------------------
 
 def test_s74_spread_shift_matches_documented_formula():
-    """Contiguous activity at row k → reported onset ≈ k - (rwin_size_idx - rwin_req_idx).
-    Smoothing disabled (filter_w == w_size) to isolate spread shift."""
+    """Spread shift: reported onset == k - (rwin_size_idx - rwin_req_idx)."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     k = 50
@@ -423,8 +400,7 @@ def test_s74_spread_shift_matches_documented_formula():
 
 
 def test_s74_seizure_at_start_does_not_overflow():
-    """A seizure starting at row 0 must not produce a negative onset index;
-    the smoothing edge mode and end-padding must preserve correct semantics."""
+    """A seizure starting at row 0 must not produce a negative onset index."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     data = np.zeros((n, 1))
@@ -440,8 +416,7 @@ def test_s74_seizure_at_start_does_not_overflow():
 
 
 def test_s74_late_seizure_outside_lookahead_not_flagged():
-    """Activity confined to the last rwin_size_idx-1 windows cannot be
-    flagged because no full lookahead window is available."""
+    """Activity confined to the last rwin_size_idx-1 windows is not flagged."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 50
     data = np.zeros((n, 1))
@@ -455,25 +430,12 @@ def test_s74_late_seizure_outside_lookahead_not_flagged():
     assert pd.isna(sz_idxs["ch0"].iloc[0])
 
 
-# Bias formula under non-trivial smoothing. A centered ``uniform_filter1d``
-# applied to a step from 0 to 1 does NOT shift the threshold-``0.5``
-# crossing — by symmetry the smoothed value crosses ``0.5`` at the
-# planted step itself for odd ``filter_w_idx``, and exactly one row
-# later for even ``filter_w_idx`` (the strict ``>`` comparison breaks
-# the half-and-half tie on the right side). The full bias for
-# threshold-``0.5`` step inputs is:
+# Bias formula under smoothing (spec § 7.4):
 #     total_shift_windows = filter_offset - (rwin_size_idx - rwin_req_idx)
 #     where filter_offset = +1 if filter_w_idx even else 0
-# These tests pin that formula across filter parities and a couple of
-# spread configurations. Spec § 7.4 / R3 documents the same.
 
 def _filter_offset(filter_w_idx):
-    """Smoothing shift in windows for a threshold-0.5 step input.
-
-    +1 for even ``filter_w_idx`` because the strict ``>`` comparison
-    rules out the exact-half tie on the right side of the centered
-    window; 0 otherwise.
-    """
+    """Smoothing shift (windows) for a threshold-0.5 step input."""
     return 1 if filter_w_idx % 2 == 0 else 0
 
 
@@ -489,11 +451,7 @@ def _filter_offset(filter_w_idx):
     (1.0, 5.0, 4.0, 40),
 ])
 def test_s74_combined_bias_step_threshold_0_5(filter_w, rwin_size, rwin_req, planted_idx):
-    """For a clean step at row ``planted_idx`` and threshold = 0.5, the
-    detected onset matches the corrected R3 formula exactly:
-
-        detected = planted + filter_offset - (rwin_size_idx - rwin_req_idx)
-    """
+    """Step input at threshold 0.5: detected onset matches the bias formula."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     data = np.zeros((n, 1))
@@ -518,11 +476,7 @@ def test_s74_combined_bias_step_threshold_0_5(filter_w, rwin_size, rwin_req, pla
 
 
 def test_s74_smoothing_step_at_midpoint_threshold_default_params_zero_net_shift():
-    """Worked example from spec § 7.4: with default parameters
-    (``filter_w=10s``, ``rwin_size=5s``, ``rwin_req=4s``) at threshold
-    ``0.5``, a step at row ``k=50`` produces detected onset at row 50
-    exactly — the +1 even-parity smoothing offset is canceled by the
-    -1 spread shift."""
+    """Default params at threshold 0.5: smoothing/spread shifts cancel exactly."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     k = 50
@@ -536,15 +490,7 @@ def test_s74_smoothing_step_at_midpoint_threshold_default_params_zero_net_shift(
     assert sz_idxs["ch0"].iloc[0] == k
 
 
-# Multi-channel pipeline behavior. ``get_onset_and_spread`` runs
-# smoothing/threshold/spread independently per channel; these tests
-# pin per-channel independence simultaneously with the bias formula.
-# Some channels carry a clean planted step (window-aligned, seizing);
-# the rest stay all zeros (never crossing threshold) and must come
-# back as NaN. This is the "synthetic seizure classification" path the
-# user prefers over a full detector-driven planted-seizure suite —
-# detector feature noise is bypassed entirely, isolating the
-# smoothing/threshold/spread chain itself.
+# Multi-channel pipeline: per-channel independence + bias formula.
 
 @pytest.mark.parametrize(
     "fs,w_size,w_stride,n_windows,planted_idx,"
@@ -580,24 +526,14 @@ def test_s74_multichannel_planted_step_threshold_0_5(
     fs, w_size, w_stride, n_windows, planted_idx,
     filter_w, rwin_size, rwin_req, planted, unplanted,
 ):
-    """For a time-indexed multi-channel ``sz_prob`` with a clean step at
-    ``planted_idx`` on the ``planted`` channels and zeros on the
-    ``unplanted`` channels at threshold ``0.5``:
-
-    - each planted channel's onset matches the corrected R3 formula
-      exactly (in seconds, since the input is time-indexed);
-    - each unplanted channel comes back as NaN;
-    - all input columns are present in the output DataFrame (channel
-      ordering may differ — the implementation sorts seized channels
-      first then appends undetected — so we lookup by name).
-    """
+    """Multi-channel: planted channels match the bias formula; unplanted are NaN."""
     base = _make_base(fs=fs, w_size=w_size, w_stride=w_stride)
     columns = planted + unplanted
     data = np.zeros((n_windows, len(columns)))
     for ch in planted:
         data[planted_idx:, columns.index(ch)] = 1.0
 
-    # Time-indexed sz_prob so the Phase-F path returns onsets in seconds.
+    # Time-indexed sz_prob so onsets come back in seconds directly.
     win_samples = int(round(w_size * fs))
     step_samples = int(round(w_stride * fs))
     n_samples = (n_windows - 1) * step_samples + win_samples
@@ -613,7 +549,7 @@ def test_s74_multichannel_planted_step_threshold_0_5(
         filter_w=filter_w, rwin_size=rwin_size, rwin_req=rwin_req,
     )
 
-    # Expected onset from corrected R3 formula (spec § 7.4).
+    # Expected onset from the documented bias formula (spec § 7.4).
     filter_w_idx = _seconds_to_idx(filter_w, w_size, w_stride)
     rwin_size_idx = _seconds_to_idx(rwin_size, w_size, w_stride)
     rwin_req_idx = _seconds_to_idx(rwin_req, w_size, w_stride)
@@ -624,7 +560,7 @@ def test_s74_multichannel_planted_step_threshold_0_5(
     for ch in columns:
         assert ch in sz_idxs.columns, f"missing channel {ch} in onset DataFrame"
 
-    # Planted channels: detected onset == R3 prediction, exact.
+    # Planted channels: detected onset == bias-formula prediction, exact.
     for ch in planted:
         onset = sz_idxs[ch].iloc[0]
         assert not pd.isna(onset), (
@@ -633,7 +569,7 @@ def test_s74_multichannel_planted_step_threshold_0_5(
         )
         assert onset == pytest.approx(expected_onset_seconds), (
             f"planted channel {ch}: expected {expected_onset_seconds}s, "
-            f"got {onset}s. R3 bias formula mismatch under multi-channel "
+            f"got {onset}s. Bias formula mismatch under multi-channel "
             f"input — pipeline may be coupling channels."
         )
 
@@ -648,21 +584,11 @@ def test_s74_multichannel_planted_step_threshold_0_5(
         )
 
 
-# Realistic post-thresholded patterns. The detector's mathematical
-# correctness is one concern; the temporal accuracy of the
-# smoothing/spread chain on already-thresholded sz_clf inputs is a
-# separate one. These tests pin the chain's behavior on patterns that
-# look like a thresholded detector's output: sparse drop-outs (the
-# detector flickers below threshold occasionally), dense drop-outs
-# (insufficient sustained activity), brief pre-onset bursts, and
-# channel-cascading onsets. Filter_w is set to ``w_size`` (no further
-# smoothing) so the spread step's behavior is isolated — these inputs
-# are already binary and the detector has done the smoothing.
+# Realistic post-thresholded patterns through the spread step.
+# filter_w == w_size (smoothing disabled) to isolate spread behavior.
 
 def _build_time_indexed_sz_prob(base, n_windows, channel_data, channel_names):
-    """Build a time-indexed multi-channel sz_prob from per-channel
-    binary arrays. ``channel_data`` is a list of length-``n_windows``
-    int arrays, one per channel."""
+    """Build a time-indexed multi-channel sz_prob from per-channel binary arrays."""
     win_samples = int(round(base.w_size * base.fs))
     step_samples = int(round(base.w_stride * base.fs))
     n_samples = (n_windows - 1) * step_samples + win_samples
@@ -672,11 +598,7 @@ def _build_time_indexed_sz_prob(base, n_windows, channel_data, channel_names):
 
 
 def test_s74_sparse_dropouts_still_detect_per_formula():
-    """A 1-of-rwin_size_idx drop-out pattern (one zero every 5 windows
-    starting at the planted onset) keeps the sliding sum exactly at
-    rwin_req_idx — the detection lands at the same place as a clean
-    step would, because rwin_req is the threshold the sum must
-    >reach<, not exceed."""
+    """Sparse drop-outs (1-of-5) still satisfy rwin_req; onset matches clean step."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     k = 50
@@ -700,10 +622,7 @@ def test_s74_sparse_dropouts_still_detect_per_formula():
 
 
 def test_s74_dense_dropouts_fail_rwin_req():
-    """An alternating 1,0,1,0,... pattern after the planted onset
-    yields sliding sum ≤ 3 in every 5-window stretch, which never
-    reaches rwin_req_idx=4. The channel is never flagged → NaN.
-    Pins that rwin_req is enforced, not approximated."""
+    """Alternating 1,0 pattern fails rwin_req → channel returns NaN."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     k = 50
@@ -723,11 +642,7 @@ def test_s74_dense_dropouts_fail_rwin_req():
 
 
 def test_s74_brief_pre_onset_flicker_does_not_trigger_early():
-    """A brief 2-window burst at t0 followed by quiet, then sustained
-    activity at t1: the burst alone is too short to satisfy rwin_req
-    and gets filtered out. Detected onset lands at t1's spread-step
-    location, NOT t0. Pins that short transient bursts in the
-    thresholded signal don't masquerade as onsets."""
+    """Brief pre-onset flicker is filtered out; detection lands on sustained onset."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     pattern = np.zeros(n, dtype=int)
@@ -749,11 +664,7 @@ def test_s74_brief_pre_onset_flicker_does_not_trigger_early():
 
 
 def test_s74_cascading_onset_per_channel():
-    """Each channel has a different planted onset (a "spread cascade"
-    across channels). Detected onset on each channel matches that
-    channel's own planted location, independent of the others; a
-    never-seizing channel returns NaN. Pins that the per-channel
-    spread step truly runs per channel."""
+    """Per-channel spread step runs independently for staggered onsets."""
     base = _make_base(fs=1, w_size=1.0, w_stride=1.0)
     n = 100
     planted_per_channel = {"ch0": 20, "ch1": 35, "ch2": 50}

@@ -195,6 +195,7 @@ Temporary Items
 *.xml
 *.yaml
 *.yml
+!.github/workflows/*.yml
 *.dat
 *.bin
 
@@ -304,4 +305,4 @@ checkpoints/
 outputs/
 results/
 wandb/
-.wandb/ 
+.wandb/

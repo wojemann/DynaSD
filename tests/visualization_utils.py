@@ -308,11 +308,11 @@ def create_comprehensive_model_plot(
     plt.Figure
         Generated figure object
     """
-    # Import plot_iEEG_data from DynaSD utils
+    # Import plot_iEEG_data from dynasd utils
     import sys
     from pathlib import Path
     sys.path.append(str(Path(__file__).parent.parent))
-    from DynaSD.tools.viz import plot_ieeg_data
+    from dynasd.tools.viz import plot_ieeg_data
     
     # Create 2x2 subplot layout
     fig = plt.figure(figsize=figsize)

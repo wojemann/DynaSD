@@ -1,24 +1,4 @@
-"""
-Mathematical property tests for the HFER detector.
-
-HFER scores each window by the high-to-low frequency band-power ratio
-``(P_beta + P_gamma) / (P_theta + P_alpha)`` computed from a Welch PSD
-of the raw signal. ``forward`` is a pure function of ``X`` — the fitted
-``RobustScaler`` is stored but not consumed during inference — which
-makes a few invariants easy to pin:
-
-- output is non-negative (every band power is a non-negative integral
-  of a PSD),
-- multiplying ``X`` by a positive scalar leaves the ratio unchanged
-  (PSD scales as ``alpha**2`` in both numerator and denominator, so
-  the scalar cancels),
-- a signal whose spectral mass lives in the high band has strictly
-  higher HFER than one whose mass lives in the low band,
-- ``forward(X)`` is deterministic across repeated calls.
-
-Detection-quality / planted-seizure tests live in the deferred end-to-end
-suite (``docs/testing_strategy.md`` § 6).
-"""
+"""Mathematical property tests for the HFER detector."""
 
 import sys
 import warnings
@@ -30,7 +10,7 @@ import pytest
 
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import HFER
+from dynasd import HFER
 
 
 FS = 256
@@ -49,9 +29,7 @@ def _make_noise(amplitude=1.0, seed=0):
 
 
 def _make_sine(freq_hz, seed=0):
-    """Sine at ``freq_hz`` plus a tiny noise floor so the low-band term
-    in the HFER ratio is never identically zero (avoids divide-by-zero
-    on pure-tone inputs)."""
+    """Sine at ``freq_hz`` plus tiny noise floor (avoids divide-by-zero in HFER ratio)."""
     rng = np.random.RandomState(seed)
     n_samples = FS * N_SECONDS
     t = np.arange(n_samples) / FS
@@ -70,9 +48,7 @@ def _fit_and_forward(model, x):
 
 
 def test_features_are_non_negative_and_finite():
-    """HFER output must be >= 0 and finite — both numerator and
-    denominator are sums of band powers (non-negative integrals of a
-    PSD), and on real-valued noise neither vanishes."""
+    """HFER output is >= 0 and finite."""
     model = HFER(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
     x = _make_noise()
     out = _fit_and_forward(model, x)
@@ -81,9 +57,7 @@ def test_features_are_non_negative_and_finite():
 
 
 def test_amplitude_scale_invariance():
-    """``forward(alpha * X) == forward(X)`` for ``alpha > 0``: PSD
-    scales as ``alpha**2`` in both numerator and denominator, so the
-    ratio cancels exactly (modulo floating-point rounding)."""
+    """``forward(alpha * X) == forward(X)`` for ``alpha > 0`` (band-power ratio is scale-invariant)."""
     model = HFER(fs=FS, w_size=W_SIZE, w_stride=W_STRIDE)
     x = _make_noise()
     with warnings.catch_warnings():
@@ -95,9 +69,7 @@ def test_amplitude_scale_invariance():
 
 
 def test_high_band_signal_has_higher_hfer_than_low_band():
-    """A 50 Hz sine (well within the gamma band 24-97 Hz) must produce
-    strictly larger HFER values than a 5 Hz sine (within the theta band
-    3.5-7.4 Hz) on every channel mean."""
+    """A 50 Hz (gamma) sine produces strictly larger HFER than a 5 Hz (theta) sine."""
     x_fit = _make_noise()
     x_low = _make_sine(freq_hz=5.0, seed=1)    # theta-band content
     x_high = _make_sine(freq_hz=50.0, seed=1)  # gamma-band content
