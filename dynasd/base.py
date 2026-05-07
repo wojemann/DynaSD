@@ -254,7 +254,7 @@ class DynaSDBase:
         else:
             raise ValueError(f"Unknown aggregation method: {method}")
 
-    def get_threshold(self, sz_prob = None, method='automedian', verbose=False, seed=100, threshold_agg='median'):
+    def get_threshold(self, sz_prob = None, method='pretrained', verbose=False, seed=100, threshold_agg='median'):
         """
         Calculate seizure detection threshold using specified method.
         
