@@ -1,6 +1,9 @@
 
 
 # DynaSD
+<img width="862" alt="logo" src="https://github.com/user-attachments/assets/75f0e87c-8209-4e9b-af48-72e6dc6c1120" />
+<br>
+</br>
 
 <p align="center">
     <a href="https://github.com/wojemann/DynaSD/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/wojemann/DynaSD?color=blue"></a>
