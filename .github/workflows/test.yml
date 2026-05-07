@@ -1,0 +1,127 @@
+name: tests
+
+on:
+  push:
+    branches: [main, "release-prep/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: Fast spec/contract suite (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package + test extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run fast suite (torch-free)
+        run: |
+          pytest tests/test_windowing_smoothing_spec.py \
+                 tests/test_absslp_spec.py \
+                 tests/test_hfer_spec.py \
+                 tests/test_imprint_spec.py \
+                 -v
+
+  contract:
+    name: Contract + NDD-family suite (py3.11, torch + tensorflow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package + all extras + test extras
+        # The contract suite parametrizes every detector in dynasd.__all__,
+        # which means the test module imports both torch- and tensorflow-
+        # backed classes at collection time. WVNT tests skip cleanly without
+        # checkpoints; NDD-family tests fit tiny models on CPU.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all,test]"
+
+      - name: Run contract + internals + NDD-family
+        run: |
+          pytest tests/test_model_api_contract.py \
+                 tests/test_nddbase_internals.py \
+                 tests/test_ndd_family_spec.py \
+                 -v
+
+  pretrained:
+    name: Pretrained-checkpoint suite (py3.11)
+    runs-on: ubuntu-latest
+    # Only run on main / dispatch — installing tensorflow is slow and the
+    # GitHub Release assets are required, so we don't gate every PR on it.
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Cache pretrained checkpoints
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dynasd
+          key: dynasd-checkpoints-v0.1.0-wvnt
+
+      - name: Install package + torch + tensorflow + test extras
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[torch,tensorflow,test]"
+
+      - name: Pre-warm checkpoint cache from GitHub Release
+        run: |
+          python - <<'PY'
+          from dynasd._downloads import fetch_checkpoint, CHECKPOINTS
+          for name in CHECKPOINTS:
+              fetch_checkpoint(name)
+          PY
+
+      - name: Run pretrained-classifier spec
+        run: pytest tests/test_pretrained_classifiers_spec.py -v
+
+  notebook:
+    name: Quickstart notebook executes (py3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package + viz + test extras + jupyter
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[viz,test]"
+          python -m pip install jupyter nbconvert ipykernel
+
+      - name: Execute quickstart.ipynb
+        run: |
+          jupyter nbconvert --to notebook --execute examples/quickstart.ipynb \
+            --output /tmp/quickstart-executed.ipynb \
+            --ExecutePreprocessor.timeout=120

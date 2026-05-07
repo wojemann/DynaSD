@@ -14,10 +14,10 @@ import sys
 import os
 import warnings
 
-# Add parent directory to path to import DynaSD modules
+# Add parent directory to path to import dynasd modules
 sys.path.append(str(Path(__file__).parent.parent))
 
-from DynaSD import NDD
+from dynasd import NDD
 from tests.data_generators import generate_test_datasets
 from tests.visualization_utils import create_comprehensive_model_plot
 
@@ -32,8 +32,8 @@ class TestNDD(unittest.TestCase):
         self.win_size = 1.0  # 1 second windows
         self.stride = 0.5    # 0.5 second stride
         self.hidden_size = 10
-        self.train_win = 12
-        self.pred_win = 1
+        self.sequence_length = 12
+        self.forecast_length = 1
         self.num_epochs = 5  # Reduced for faster testing
         
         # Create output directory for test results
@@ -53,22 +53,21 @@ class TestNDD(unittest.TestCase):
         self.model = NDD(
             hidden_size=self.hidden_size,
             fs=self.fs,
-            train_win=self.train_win,
-            pred_win=self.pred_win,
+            sequence_length=self.sequence_length,
+            forecast_length=self.forecast_length,
             w_size=self.win_size,
             w_stride=self.stride,
             num_epochs=self.num_epochs,
             lr=0.01,
             use_cuda=False,  # Use CPU for testing
-            val=False
         )
-    
+
     def test_model_initialization(self):
         """Test that NDD model initializes correctly."""
         self.assertEqual(self.model.hidden_size, self.hidden_size)
         self.assertEqual(self.model.fs, self.fs)
-        self.assertEqual(self.model.train_win, self.train_win)
-        self.assertEqual(self.model.pred_win, self.pred_win)
+        self.assertEqual(self.model.sequence_length, self.sequence_length)
+        self.assertEqual(self.model.forecast_length, self.forecast_length)
         self.assertEqual(self.model.w_size, self.win_size)
         self.assertEqual(self.model.w_stride, self.stride)
         self.assertEqual(self.model.num_epochs, self.num_epochs)
@@ -95,7 +94,10 @@ class TestNDD(unittest.TestCase):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             
-            # Fit model and get predictions
+            # forward(X) is the unified inference entry point across all
+            # DynaSD models — returns a (n_windows, n_channels) DataFrame.
+            # predict() on NN models is a separate forecasting method that
+            # returns the predicted time series, not seizure features.
             self.model.fit(self.baseline_data)
             baseline_features = self.model.forward(self.baseline_data)
             seizure_features = self.model.forward(self.seizure_data)
