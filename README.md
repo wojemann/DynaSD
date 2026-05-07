@@ -1,12 +1,10 @@
-<img width="862" alt="logo" src="https://github.com/user-attachments/assets/75f0e87c-8209-4e9b-af48-72e6dc6c1120" />
+
 
 # DynaSD
 
 **Dyna**mic **S**eizure **D**etection models and utilities for iEEG analysis,
-based on work described in the preprint [*Unsupervised seizure annotation
-and detection with neural dynamic divergence*][preprint].
-
-[preprint]: https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1
+based on work described in the preprint *[Unsupervised seizure annotation
+and detection with neural dynamic divergence](https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1)*.
 
 This package provides multiple detector implementations under a shared
 `fit` → `forward` → `get_onset_and_spread` API, including neural dynamic
@@ -75,7 +73,7 @@ workflows, not a required runtime dependency.
 ## Quick start
 
 End-to-end walkthrough on a bundled synthetic seizure recording lives in
-[`examples/quickstart.ipynb`](examples/quickstart.ipynb). The four-step
+`[examples/quickstart.ipynb](examples/quickstart.ipynb)`. The four-step
 pipeline:
 
 ```python
@@ -88,15 +86,16 @@ model = ABSSLP(fs=fs, w_size=1.0, w_stride=0.5)
 model.fit(X.iloc[: int((example.seizure_start_sec - 10) * fs)])   # 20s of baseline
 
 sz_prob = model(X)                 # window-by-channel detector scores
+model.get_threshold()
 onsets = model.get_onset_and_spread(
-    sz_prob, threshold=150.0,
-    filter_w=10.0, rwin_size=5.0, rwin_req=4.0,
+    sz_prob, filter_w=10.0,
+    rwin_size=5.0, rwin_req=4.0,
 )                                          # per-channel onset times in seconds
 ```
 
 Every detector class follows the same interface; swap `ABSSLP` for any of
 the available models below. See the spec at
-[`docs/spec_windowing_smoothing.md`](docs/spec_windowing_smoothing.md)
+`[docs/spec_windowing_smoothing.md](docs/spec_windowing_smoothing.md)`
 for the windowing/smoothing/spread math.
 
 ## Pretrained-checkpoint detectors
@@ -108,10 +107,10 @@ Release into a per-user cache directory and verifies its SHA-256.
 Subsequent calls load directly from cache.
 
 - **Cache location**: `~/Library/Caches/dynasd/` (macOS),
-  `~/.cache/dynasd/` (Linux), `%LOCALAPPDATA%\dynasd\Cache` (Windows).
-  Override with `DYNASD_CACHE_DIR=/path/to/dir`.
+`~/.cache/dynasd/` (Linux), `%LOCALAPPDATA%\dynasd\Cache` (Windows).
+Override with `DYNASD_CACHE_DIR=/path/to/dir`.
 - **Offline use**: drop the file at the cache path manually; the SHA-256
-  check will validate it.
+check will validate it.
 - **Override**: pass an explicit path to skip the download path entirely:
 
 ```python
@@ -123,18 +122,20 @@ ONCET(checkpoint_path="/abs/path/to/best_model.pth",
 
 Exported from `dynasd`:
 
-| Class | Method | Extra |
-|---|---|---|
-| `ABSSLP` | Mean abs first difference | core |
-| `HFER` | High frequency energy ratio | core |
-| `IMPRINT` | Mahalanobis-distance MAD score | core |
-| `NDD` | Neural Dynamic Divergence (multi-step LSTM) | `[torch]` |
-| `GIN` | NDD with residual GRU connections | `[torch]` |
-| `LiNDDA` | Linear NDD Approximation | `[torch]` |
-| `ONCET` | Pretrained dilated CNN classifier | `[torch]` |
-| `WVNT` | Pretrained WaveNet classifier | `[tensorflow]` |
-| `DynaSDBase`, `NDDBase` | Base classes for new detectors | core |
-| `load_example_seizure` | Bundled synthetic recording | core |
+
+| Class                   | Method                                      | Extra          |
+| ----------------------- | ------------------------------------------- | -------------- |
+| `ABSSLP`                | Mean abs first difference                   | core           |
+| `HFER`                  | High frequency energy ratio                 | core           |
+| `IMPRINT`               | Mahalanobis-distance MAD score              | core           |
+| `NDD`                   | Neural Dynamic Divergence (multi-step LSTM) | `[torch]`      |
+| `GIN`                   | NDD with residual GRU connections           | `[torch]`      |
+| `LiNDDA`                | Linear NDD Approximation                    | `[torch]`      |
+| `ONCET`                 | Pretrained dilated CNN classifier           | `[torch]`      |
+| `WVNT`                  | Pretrained WaveNet classifier               | `[tensorflow]` |
+| `DynaSDBase`, `NDDBase` | Base classes for new detectors              | core           |
+| `load_example_seizure`  | Bundled synthetic recording                 | core           |
+
 
 ## Testing
 
@@ -142,16 +143,16 @@ Exported from `dynasd`:
 pytest
 ```
 
-See [`docs/testing_strategy.md`](docs/testing_strategy.md) for the
+See `[docs/testing_strategy.md](docs/testing_strategy.md)` for the
 release-focused plan.
 
 ## Contributing
 
 If you want to add a new detector, start with:
 
-- [`dynasd/base.py`](dynasd/base.py)
-- [`dynasd/NDDBase.py`](dynasd/NDDBase.py)
-- [`docs/extending_models.md`](docs/extending_models.md)
+- `[dynasd/base.py](dynasd/base.py)`
+- `[dynasd/NDDBase.py](dynasd/NDDBase.py)`
+- `[docs/extending_models.md](docs/extending_models.md)`
 
 ## Citation / contact
 
@@ -183,3 +184,4 @@ BibTeX:
   note    = {Preprint, posted 2026-02-17}
 }
 ```
+
