@@ -24,11 +24,34 @@ package. API and packaging are stabilizing, with emphasis on:
 
 ## Installation
 
+> **Pre-release status:** DynaSD is not yet on PyPI. Until the first
+> tagged release, install directly from GitHub using the snippets in
+> [Pre-release install (from GitHub)](#pre-release-install-from-github).
+> The `pip install dynasd` form below will start working once v0.1.0
+> is published.
+
 ### Core install
 
 ```bash
 pip install dynasd
 ```
+
+### Pre-release install (from GitHub)
+
+```bash
+# Latest commit on main (recommended for collaborators).
+pip install "git+https://github.com/wojemann/DynaSD.git"
+
+# Or pin to a specific commit / tag for reproducibility.
+pip install "git+https://github.com/wojemann/DynaSD.git@<commit-or-tag>"
+
+# With extras (note the quotes — your shell will otherwise eat the brackets).
+pip install "dynasd[torch] @ git+https://github.com/wojemann/DynaSD.git"
+pip install "dynasd[all] @ git+https://github.com/wojemann/DynaSD.git"
+```
+
+To upgrade to the newest commit on main, re-run the same command — pip
+re-clones the branch tip every time when the spec uses a branch name.
 
 ### Optional model extras
 
