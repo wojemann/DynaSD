@@ -2,6 +2,13 @@
 
 # DynaSD
 
+<p align="center">
+    <a href="https://github.com/wojemann/DynaSD/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/wojemann/DynaSD?color=blue"></a>
+    <a href="https://github.com/wojemann/DynaSD/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/wojemann/DynaSD/actions/workflows/test.yml/badge.svg"></a>
+    <img alt="Python" src="https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue">
+<a href="https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1"><img alt="medRxiv" src="https://img.shields.io/badge/medRxiv-2026.02.15.26346325-1B8497"></a>
+</p>
+
 **Dyna**mic **S**eizure **D**etection models and utilities for iEEG analysis,
 based on work described in the preprint *[Unsupervised seizure annotation
 and detection with neural dynamic divergence](https://www.medrxiv.org/content/10.64898/2026.02.15.26346325v1)*.
@@ -10,15 +17,6 @@ This package provides multiple detector implementations under a shared
 `fit` → `forward` → `get_onset_and_spread` API, including neural dynamic
 divergence (NDD) approaches and complementary baseline models for seizure
 onset detection and annotation workflows.
-
-## Project status
-
-This repository is being hardened from research code to a publishable
-package. API and packaging are stabilizing, with emphasis on:
-
-- timing-focused unit tests for smoothing and windowing behavior,
-- optional dependencies by model,
-- contributor-friendly base class documentation.
 
 ## Installation
 
