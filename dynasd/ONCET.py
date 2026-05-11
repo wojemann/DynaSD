@@ -405,8 +405,8 @@ class ONCET(DynaSDBase):
         # Should return a tensor of shape (nwins, 1, win_len_idx)
         return torch.from_numpy(data_flat).float().to(self.device)
 
-def get_pretrained_threshold():
-    """
-    Get pretrained threshold for ONCET model.
-    """
-    return 0.5
+    def _get_pretrained_threshold(self):
+        """
+        Get pretrained threshold for ONCET model.
+        """
+        return 0.62 # Learned from subset of validation dataset in DynaSD paper to optimize F1 score.

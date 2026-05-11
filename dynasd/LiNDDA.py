@@ -178,8 +178,8 @@ class LiNDDA(NDDBase):
 
     def __init__(self, 
                  fs=256,
-                 sequence_length=16, 
-                 forecast_length=16,
+                 sequence_length=3, 
+                 forecast_length=2,
                  w_size=1, 
                  w_stride=0.5,
                  num_epochs=10,
