@@ -36,7 +36,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "LiNDDA":  (".LiNDDA",  "torch"),
     "NDDBase": (".NDDBase", "torch"),
     "ONCET":   (".ONCET",   "torch"),
-    "WVNT":    (".WAVENET", "tensorflow"),
+    "WVNT":    (".WVNT",    "tensorflow"),
 }
 
 __all__ = [

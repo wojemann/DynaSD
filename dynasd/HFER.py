@@ -8,16 +8,41 @@ from .base import DynaSDBase
 from .utils import moving_win_clips
 
 class HFER(DynaSDBase):
-    """ 
-    High frequency energy ratio onset detection algorithm
+    """
+    HFER (High Frequency Energy Ratio).
 
-    Based on the paper: Bartolomei et al., 2008 - https://doi.org/10.1093/brain/awn111
+    Per-window ratio of high-band (beta+gamma) to low-band (theta+alpha)
+    spectral energy. Core DynaSD pipeline uses the raw ratio as the
+    per-window feature; the original paper also defines a Page-Hinkley
+    onset rule whose parameters are preserved on the instance for
+    advanced/optional use outside the core pipeline.
 
-    Computes the signal energy ratio across winows between high and low frequency bands of the EEG
-    and detects the onset of the seizure for each channel based on the Page-Hinkley algorithm.
+    Reference
+    ---------
+    Bartolomei, F., Chauvel, P., and Wendling, F., 2008. Epileptogenicity
+    of brain structures in human temporal lobe epilepsy: a quantified
+    study from intracerebral EEG. Brain, 131(7), pp.1818-1830.
     """
 
     def __init__(self, fs=256, w_size=1, w_stride=0.5):
+        """
+        Parameters
+        ----------
+        fs : int, default=256
+            Sampling frequency (Hz) of input iEEG.
+        w_size : float, default=1
+            Window size (seconds) for per-window energy ratio.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+
+        Notes
+        -----
+        The instance also exposes Page-Hinkley parameters from the
+        original paper (``v``, ``lambda_thresh``, ``tau``, ``H``).
+        These are not consumed by the core DynaSD pipeline (which uses
+        the per-window ratio directly via :meth:`forward`) but are
+        preserved for users who want to reproduce the paper's onset rule.
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride)
         self.threshold = None
         self.freq_bands = {
@@ -26,27 +51,50 @@ class HFER(DynaSDBase):
             'beta': (12.4, 24),
             'gamma': (24, 97),
         }
-        
-        # Algorithm specific parameters
+
+        # Page-Hinkley parameters from Bartolomei et al. 2008. Not used by
+        # core DynaSD pipeline; preserved for reproducing the original
+        # paper's onset rule.
         self.v = -0.5
-        self.lambda_thresh = 15.0 
-        
+        self.lambda_thresh = 15.0
         self.tau = 1.0
         self.H = 5.0
-        
+
     def get_threshold(self):
         return self.lambda_thresh
 
-    def fit(self, x):
+    def fit(self, X):
         """
-        Fit the model on interictal data.
+        Fit scaler on baseline data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
         """
-        self.scaler = RobustScaler().fit(x)
-        nx = self.scaler.transform(x)
-        self.inter = pd.DataFrame(nx, columns=x.columns)
+        self.scaler = RobustScaler().fit(X)
+        nx = self.scaler.transform(X)
+        self.inter = pd.DataFrame(nx, columns=X.columns)
         self.is_fitted = True
 
     def forward(self, X):
+        """
+        Run inference on new data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window high/low band energy ratio of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns.
+        """
         assert self.is_fitted, "Must fit model before running inference"
         channels = X.columns.to_list()
         

@@ -172,26 +172,110 @@ class LinearForecaster(nn.Module):
 
 class LiNDDA(NDDBase):
     """
-    LiNDDA (Linear Neural Dynamic Divergence Approximation) - Linear regression benchmark for GIN.
-    Uses simple linear regression for multi-step forecasting instead of RNNs.
+    LiNDDA (Linear Neural Dynamic Divergence Approximation).
+
+    Trains a multivariate linear forecaster on baseline dynamics. At
+    inference, per-window forecasting MSE quantifies divergence from
+    the baseline dynamics.
+
+    Reference
+    ---------
+    Ojemann, W. K. S., Xu, Z., Shi, H., Walsh, K., Pattnaik, A.,
+    Sinha, N., Lavelle, S., Aguila, C., Gallagher, R., Revell, A.,
+    LaRocque, J. J., Korzun, J., Kulick-Soper, C. V., Zhou, D. J.,
+    Galer, P. D., Sinha, S. R., Shinohara, R. T., Davis, K. A.,
+    Litt, B., and Conrad, E. C., 2026. Unsupervised seizure annotation
+    and detection with neural dynamic divergence. medRxiv, 2026-02-15.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  fs=256,
-                 sequence_length=3, 
+                 sequence_length=3,
                  forecast_length=2,
-                 w_size=1, 
+                 w_size=1,
                  w_stride=0.5,
                  num_epochs=10,
                  batch_size=1024,
                  lr=0.01,
                  use_cuda=False,
-                 closeform=False,       # Use sklearn LinearRegression instead of torch
+                 closeform=False,
                  **kwargs):
+        """
+        Parameters
+        ----------
+        fs : int, default=256
+            Sampling frequency (Hz) of input iEEG.
+        sequence_length : int, default=3
+            Number of input samples fed to the linear forecaster per
+            forecast. Only values with calibrated pretrained boundaries
+            are accepted (currently 1-7); other values raise
+            ``ValueError`` at construction.
+        forecast_length : int, default=2
+            Number of samples forecast per sequence at inference.
+            Training always uses single-step targets.
+        w_size : float, default=1
+            Aggregation window size (seconds) for per-window divergence.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+        num_epochs : int, default=10
+            Training epochs (ignored when ``closeform=True``).
+        batch_size : int, default=1024
+            Mini-batch size for torch training (ignored when
+            ``closeform=True``).
+        lr : float, default=0.01
+            Adam learning rate (ignored when ``closeform=True``).
+        use_cuda : bool, default=False
+            If True and CUDA is available, train and infer on GPU.
+            Forced to False when ``closeform=True``.
+        closeform : bool, default=False
+            If True, fit a closed-form sklearn ``LinearRegression``
+            instead of training the torch ``LinearForecaster`` with
+            SGD. Useful for deterministic, fast baselines.
+
+        Other Parameters
+        ----------------
+        early_stopping : bool, default=False
+            Enable validation-loss early stopping during training.
+        val_split : float, default=0.2
+            Fraction of training sequences held out for validation when
+            ``early_stopping=True``.
+        patience : int, default=5
+            Epochs without ``tolerance``-level improvement before
+            stopping early.
+        tolerance : float, default=1e-4
+            Minimum validation-loss improvement counted as progress.
+        verbose : bool, default=True
+            If True, print training diagnostics and tqdm progress.
+        num_workers : int, default=0
+            DataLoader worker count for training.
+        pin_memory : bool, default=use_cuda
+            DataLoader ``pin_memory`` flag.
+        persistent_workers : bool, default=True
+            DataLoader ``persistent_workers`` flag (applied only when
+            ``num_workers > 0``).
+        prefetch_factor : int, default=3
+            DataLoader ``prefetch_factor`` (applied only when
+            ``num_workers > 0``).
+        grad_accumulation_steps : int, default=1
+            Number of mini-batches to accumulate gradients over before
+            an optimizer step.
+        mrse : bool, default=False
+            Reserved flag; see :class:`NDDBase`.
+        scaler_class : type, default=sklearn.preprocessing.RobustScaler
+            Scaler class used to normalize input data.
+        scaler_kwargs : dict, default={}
+            Keyword arguments forwarded to ``scaler_class``.
+
+        Raises
+        ------
+        ValueError
+            If ``sequence_length`` is not one of the values for which a
+            pretrained boundary is available (1-7).
+        """
         if closeform:
             use_cuda = False
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
-        # Store parameters - input_length == forecast_horizon for simplicity
+
         self.sequence_length = sequence_length
         self.forecast_length = forecast_length
         self.num_epochs = num_epochs
@@ -221,7 +305,22 @@ class LiNDDA(NDDBase):
         self._boundary = boundary_dict[self.sequence_length]
 
     def fit(self, X):
-        """Fit the Linear forecasting model using either torch or sklearn"""
+        """
+        Fit the linear forecaster on baseline data.
+
+        Dispatches to the closed-form sklearn ``LinearRegression``
+        branch when ``closeform=True``, otherwise trains the torch
+        ``LinearForecaster`` via
+        :meth:`NDDBase._train_model_multistep`. Both branches store
+        per-channel baseline MSE statistics on ``self.dist_params``
+        used by :meth:`forward` to z-score test-time MSE.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
+        """
         input_size = X.shape[1]
 
         if self.closeform:
@@ -369,7 +468,28 @@ class LiNDDA(NDDBase):
         return predicted_df_scaled
     
     def predict(self, X):
-        """Use the appropriate prediction method based on closeform setting"""
+        """
+        Generate the forecasted time series for diagnostics.
+
+        Use :meth:`forward` (or ``self(X)``) for seizure detection
+        features. This method returns the reconstructed forecast itself
+        and is intended for inspecting model behavior, not detection.
+        Dispatches to the sklearn or torch reconstruction routine
+        based on ``self.closeform``.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Forecasted iEEG of shape (n_samples, n_channels) on the
+            original scale, with NaNs for the first ``sequence_length``
+            samples that have no preceding context. Columns = X.columns.
+        """
         if self.closeform:
             return self.predict_multistep_sklearn(X)
         else:

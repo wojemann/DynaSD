@@ -65,33 +65,55 @@ def prepare_wavenet_segment(x):
 
 class WVNT(DynaSDBase):
     """
-    WaveNet-based seizure detection wrapper class.
-    
-    Utilizes a pre-trained convolutional neural network (WaveNet) for seizure detection.
-    The model was previously trained on iEEG data to classify seizure vs non-seizure epochs.
-    This wrapper handles data preprocessing, windowing, and probability extraction for
-    real-time seizure detection applications.
-    
-    The WaveNet architecture is particularly effective at capturing temporal patterns
-    in multi-channel neural data through dilated convolutions and residual connections.
-    
-    Parameters:
-    -----------
-    mdl : tensorflow.keras.Model
-        Pre-trained WaveNet model loaded from disk
-    win_size : float, default=1
-        Window size in seconds for analysis
-    stride : float, default=0.5  
-        Window stride in seconds (overlap control)
-    fs : int, default=128
-        Sampling frequency for the model input
+    WVNT (WaveNet).
+
+    Pretrained univariate WaveNet-style classifier producing per-window
+    seizure probability for each channel.
+
+    Notes
+    -----
+    Recommended preprocessing per the reference below:
+
+    - Bipolar re-referencing
+    - Noisy channel rejection
+    - Notch filtering at 60, 120, and 180 Hz
+    - Bandpass filtering between 1 and 120 Hz
+    - Downsampling to 128 Hz
+
+    Reference
+    ---------
+    Revell, A. Y., Jaskir, M., Pattnaik, A. R., Ojemann, W. K. S.,
+    Conrad, E., Sinha, N., Scheid, B. H., Lucas, A., Bernabei, J. M.,
+    Beckerle, J., Stein, J. M., Das, S. R., Litt, B., and Davis, K. A.,
+    2026. AI-Driven Mapping of Seizure Spread Patterns. Annals of
+    Neurology. DOI: https://doi.org/10.1002/ana.78203
     """
-    def __init__(self, model_path = None, w_size=1, w_stride=0.5, fs=128, batch_size=32, verbose=False, **kwargs):
+    def __init__(self, model_path=None, w_size=1, w_stride=0.5, fs=128,
+                 batch_size=32, verbose=False, **kwargs):
+        """
+        Parameters
+        ----------
+        model_path : str or None, default=None
+            Path to the WaveNet ``.hdf5`` checkpoint. If None, the
+            packaged checkpoint is downloaded via ``_downloads``.
+        w_size : float, default=1
+            Window size (seconds) per inference clip. Must match the
+            checkpoint's input length at ``fs``.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+        fs : int, default=128
+            Sampling frequency (Hz) of input iEEG. Should match the
+            preprocessing pipeline used for training.
+        batch_size : int, default=32
+            Batch size for Keras inference.
+        verbose : bool, default=False
+            If True, surface Keras predict progress and model load
+            errors.
+        **kwargs
+            Forwarded to :class:`DynaSDBase` (e.g. ``scaler_class``,
+            ``scaler_kwargs``).
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, **kwargs)
-        """Initialize WaveNet wrapper with model and windowing parameters."""
-        self.w_size = w_size
-        self.w_stride = w_stride
-        self.fs = fs
         self.model_path = model_path
         self.batch_size = batch_size
         self.verbose = verbose
@@ -117,61 +139,58 @@ class WVNT(DynaSDBase):
     def __str__(self) -> str:
         return "WVNT"
         
-    def fit(self, x):
+    def fit(self, X):
         """
-        Fit RobustScaler to training data for normalization.
+        Fit RobustScaler on baseline data.
 
-        Parameters:
-        -----------
-        x : pandas.DataFrame
-            Training data (samples x channels)
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
         """
-        self.scaler = RobustScaler().fit(x)
+        self.scaler = RobustScaler().fit(X)
         self.is_fitted = True
 
-    def forward(self, x):
+    def forward(self, X):
         """
-        Generate seizure detection predictions using WaveNet model.
-        
-        Processes multi-channel iEEG data through sliding windows, applies
-        normalization, and generates seizure probability for each window-channel pair.
-        
-        Parameters:
-        -----------
-        x : pandas.DataFrame
-            Input iEEG data (samples x channels)
-            
-        Returns:
-        --------
-        pd.DataFrame
-            Seizure probabilities with windows as rows and channels as columns
+        Run inference on new data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window seizure probability of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns.
         """
         assert self.is_fitted, "Must fit model before running inference"
         if self.model is None:
             raise ValueError("No valid WaveNet model available for prediction")
 
-        # Store channel names and calculate dimensions
-        chs = x.columns
-        nwins = num_wins(len(x), self.fs, self.w_size, self.w_stride)
+        chs = X.columns
+        nwins = num_wins(len(X), self.fs, self.w_size, self.w_stride)
         nch = len(chs)
-        
-        # Apply normalization and prepare data for WaveNet
-        x_normalized = pd.DataFrame(self.scaler.transform(x), columns=chs)
+
+        x_normalized = pd.DataFrame(self.scaler.transform(X), columns=chs)
         x_prepared = self._prepare_wavenet_segment(x_normalized)
-        if not self.verbose:
-            verbocity = 0
-        else:
-            verbocity = 1
-        # Generate predictions (get seizure probability from class 1)
-        y = self.model.predict(x_prepared,verbose=verbocity,batch_size=self.batch_size)[:, 1]
-        
-        # Reshape to windows x channels format and convert to DataFrame.
+        verbocity = 1 if self.verbose else 0
+
+        # Class-1 seizure probability.
+        y = self.model.predict(x_prepared, verbose=verbocity,
+                               batch_size=self.batch_size)[:, 1]
+
         # Index is realized window-start times in seconds (spec section 5).
         probabilities = y.reshape(nwins, nch)
         features_df = pd.DataFrame(
             probabilities,
-            columns=x.columns,
-            index=self.get_win_index(len(x)),
+            columns=X.columns,
+            index=self.get_win_index(len(X)),
         )
 
         return features_df

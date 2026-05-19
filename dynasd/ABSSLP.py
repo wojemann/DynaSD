@@ -6,65 +6,49 @@ from .base import DynaSDBase
 
 class ABSSLP(DynaSDBase):
     """
-    Absolute slope-based seizure detection algorithm.
-    
-    Computes seizure probability based on the absolute value of signal derivatives.
-    Uses sliding windows to calculate the mean absolute slope for each channel,
-    normalized by baseline standard deviations. Higher slopes typically indicate
-    seizure activity with rapid voltage changes.
-    
-    Features:
-    - RobustScaler normalization for artifact resistance
-    - Configurable window size and stride
-    - Baseline normalization using interictal data statistics
+    ABSSLP (Absolute Slope).
+
+    Per-window mean absolute slope, normalized by per-channel baseline
+    standard deviation and scaled by sampling frequency.
+
+    Reference
+    ---------
+    Schindler, K., Leung, H., Elger, C. E., and Lehnertz, K., 2007.
+    Assessing seizure dynamics by analysing the correlation structure of
+    multichannel intracranial EEG. Brain, 130(1), pp.65-77.
     """
     def __init__(self, w_size=1, w_stride=0.5, fs=256):
-        # Call parent constructor
+        """
+        Parameters
+        ----------
+        w_size : float, default=1
+            Window size (seconds) for per-window slope.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+        fs : int, default=256
+            Sampling frequency (Hz) of input iEEG.
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride)
-        
-        # ABSSLP-specific function
         self.function = lambda x: np.mean(np.abs(np.diff(x, axis=-1)), axis=-1)
-    
+
     def __str__(self) -> str:
         return "AbsSlp"
-        
-    def fit(self, x):
-        """
-        Fit the model on interictal data.
-        
-        Parameters:
-        -----------
-        x : pd.DataFrame
-            Training data with samples x channels format
-        """
-        # Use base class scaler fitting
-        self._fit_scaler(x)
-        
-        # Transform data and store ABSSLP-specific attributes
-        nx = self.scaler.transform(x)
-        self.inter = pd.DataFrame(nx, columns=x.columns)
-        self.nstds = np.std(nx, axis=0)
-        
-        # Mark as fitted
-        self.is_fitted = True
 
-    def get_times(self, x):
+    def fit(self, X):
         """
-        Get time points for each window.
-        
-        Parameters:
-        -----------
-        x : pd.DataFrame
-            Input data with samples x channels format
-            
-        Returns:
-        --------
-        np.ndarray
-            Array of time points for each window
+        Fit scaler and store baseline per-channel standard deviations.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
         """
-        # x should be samples x channels df
-        time_mat = moving_win_clips(np.arange(len(x))/self.fs, self.fs, self.w_size, self.w_stride)
-        return np.ceil(time_mat[:, -1])
+        self._fit_scaler(X)
+        nx = self.scaler.transform(X)
+        self.inter = pd.DataFrame(nx, columns=X.columns)
+        self.nstds = np.std(nx, axis=0)
+        self.is_fitted = True
 
     def _apply_windowed_function(self, x):
         """
@@ -100,40 +84,38 @@ class ABSSLP(DynaSDBase):
         
         return slopes
 
-    def forward(self, x):
+    def forward(self, X):
         """
-        Apply the fitted model to new data.
-        
-        Parameters:
-        -----------
-        x : pd.DataFrame
-            Input data with samples x channels format
-            
-        Returns:
-        --------
-        pd.DataFrame
-            Normalized slope features with windows as rows and channels as columns
+        Run inference on new data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window normalized absolute slope of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns.
         """
-        # Check if model is fitted
         assert self.is_fitted, "Must fit model before running inference"
-        
-        # Use base class scaler transform
-        x_scaled_df = self._scaler_transform(x)
-        x_scaled = x_scaled_df.values.T  # Convert to channels x samples
-        
-        # Apply windowed function
+
+        x_scaled_df = self._scaler_transform(X)
+        x_scaled = x_scaled_df.values.T
+
         slopes = self._apply_windowed_function(x_scaled)
-        
-        # Scale by standard deviations and sampling frequency
+
         scaled_slopes = slopes / self.nstds.reshape(-1, 1) * self.fs
         scaled_slopes = scaled_slopes.squeeze()
-        
-        # Convert to DataFrame with windows as rows, channels as columns.
+
         # Index is realized window-start times in seconds (spec section 5).
         features_df = pd.DataFrame(
             scaled_slopes.T,
-            columns=x.columns,
-            index=self.get_win_index(len(x)),
+            columns=X.columns,
+            index=self.get_win_index(len(X)),
         )
 
         return features_df

@@ -8,7 +8,52 @@ from .utils import moving_win_clips
 
 
 class IMPRINT(DynaSDBase):
+    """
+    IMPRINT.
+
+    Per-window Mahalanobis-distance abnormality score relative to a
+    preictal baseline. Features (line length, energy, and per-band
+    spectral power) are computed per channel per window, then the
+    Mahalanobis distance to the cleaned baseline is z-scored against
+    the baseline's own MAD-rescaled distribution.
+
+    Reference
+    ---------
+    Gascoigne, S. J., Waldmann, L., Schroeder, G. M., Panagiotopoulou,
+    M., Blickwedel, J., Chowdhury, F., Cronie, A., Diehl, B., Duncan,
+    J. S., Falconer, J., Faulder, R., Guan, Y., Leach, V., Livingstone,
+    S., Papasavvas, C., Thomas, R. H., Wilson, K., Taylor, P. N., and
+    Wang, Y., 2023. A library of quantitative markers of seizure
+    severity. Epilepsia, 64(4), pp.1074-1086.
+    """
+
     def __init__(self, fs, w_size=1, w_stride=0.125):
+        """
+        Parameters
+        ----------
+        fs : int
+            Sampling frequency (Hz) of input iEEG.
+        w_size : float, default=1
+            Window size (seconds) for per-window features.
+        w_stride : float, default=0.125
+            Window stride (seconds) between consecutive windows.
+
+        Notes
+        -----
+        The instance also exposes parameters from the original paper's
+        onset rule, used only by the ``legacy=True`` branch of
+        :meth:`get_onset_and_spread` and otherwise ignored by the core
+        DynaSD pipeline:
+
+        - ``mad_thresh`` : MAD threshold for flagging a window as
+          abnormal (also used during ``fit`` to discard outlier
+          baseline windows before computing reference statistics).
+        - ``min_sz_dur`` : minimum seizure duration (seconds) enforced
+          by :meth:`check_inclusion`.
+        - ``det``, ``prop_rec``, ``rec_thresh``, ``rec_type`` :
+          original-paper recruitment/onset parameters preserved for
+          users reproducing the published onset rule.
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride)
         self.freq_bands = {
             'delta': (0.5, 4),
@@ -19,15 +64,19 @@ class IMPRINT(DynaSDBase):
             'high_gamma': (70, 120)
         }
 
-        self.min_sz_dur = 9 # minimum seizure duration in seconds for inclusion
+        # MAD threshold for baseline outlier rejection (in fit) and for
+        # legacy onset detection (in get_onset_and_spread legacy=True).
+        self.mad_thresh = 5
+        self.min_sz_dur = 9  # minimum seizure duration (s) for inclusion
 
-        self.window_size = 1
-        self.det = 7 # count of windows beyond first detected onset which will also be considered as onset
+        # Original-paper onset/recruitment parameters. Used only by the
+        # legacy=True branch of get_onset_and_spread; otherwise ignored
+        # by the core DynaSD pipeline.
+        self.det = 7
+        self.prop_rec = 0.8
+        self.rec_thresh = 9
+        self.rec_type = "sec"
 
-        self.prop_rec = 0.8 # proportion of the rec_thresh that is required for activity to be considered in onset
-        self.rec_thresh = 9 # number of seconds for which activity mst persist to be considered a seizure
-        self.rec_type = "sec" # type of threshold ot validation activity is ictal ("sec" or "prop")
-        self.mad_thresh = 5 # MAD threshold for detection of activity
         self.channel_labels = None
 
         # Constant for MAD calculation
@@ -153,7 +202,20 @@ class IMPRINT(DynaSDBase):
 
     def fit(self, X):
         """
-        Fit the model using preictal data.
+        Fit reference statistics on baseline (preictal) data.
+
+        For each channel, computes per-window features, Mahalanobis
+        distances against itself, rejects outlier windows via the MAD
+        rule (``mad_thresh``), and stores the cleaned reference plus
+        per-channel median and scaled MAD used by :meth:`forward` to
+        z-score ictal Mahalanobis distances.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (preictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns. Must satisfy
+            :meth:`check_inclusion` (length >= ``min_sz_dur * fs``).
         """
         # Check inclusion criteria
         if not self.check_inclusion(X):
@@ -213,7 +275,20 @@ class IMPRINT(DynaSDBase):
 
     def forward(self, X):
         """
-        Detect seizure onset in ictal data using the fitted preictal baseline.
+        Run inference on new data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns. Must satisfy :meth:`check_inclusion`.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window MAD-scored Mahalanobis distances of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns.
         """
 
         assert self.is_fitted, "Must fit model before running inference"

@@ -747,12 +747,26 @@ class NDDBase(DynaSDBase):
 
     def forward(self, X):
         """
-        Run inference and return features aggregated into windows.
-        1. Create sequences from continuous data and get per-channel losses
-        2. Aggregate sequence-level losses into w_size/w_stride windows
-        
-        Returns:
-            ndd_df: DataFrame with NDD values, columns = channel names
+        Run inference on new data.
+
+        Internally generates sequences, runs the forecaster, computes
+        per-sequence prediction MSE, aggregates into ``w_size``/
+        ``w_stride`` windows, and z-scores against the baseline MSE
+        statistics stored during :meth:`fit`.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window forecasting MSE of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns. The z-scored NDD
+            score is also stored on ``self.ndd_df``.
         """
         assert self.is_fitted, "Must fit model before running inference"
         mse_df, corr_df = self._get_features(X)

@@ -259,18 +259,69 @@ def count_parameters(model):
 
 class ONCET(DynaSDBase):
     """
-    ONCET (ONset detection ConvNet) — pretrained dilated CNN classifier for seizure detection.
+    ONCET (ONset detection ConvnET).
+
+    Pretrained univariate seizure detector built on dilated depthwise
+    separable convolutions with residual connections and channel
+    attention. Produces per-window seizure probability for each channel.
+
+    Notes
+    -----
+    Recommended preprocessing per the reference below:
+
+    - Bipolar re-referencing
+    - Noisy channel rejection
+    - Notch filtering at 60 and 120 Hz
+    - Bandpass filtering between 1 and 120 Hz
+    - Downsampling to 256 Hz
+
+    Reference
+    ---------
+    Ojemann, W. K. S., Xu, Z., Shi, H., Walsh, K., Pattnaik, A.,
+    Sinha, N., Lavelle, S., Aguila, C., Gallagher, R., Revell, A.,
+    LaRocque, J. J., Korzun, J., Kulick-Soper, C. V., Zhou, D. J.,
+    Galer, P. D., Sinha, S. R., Shinohara, R. T., Davis, K. A.,
+    Litt, B., and Conrad, E. C., 2026. Unsupervised seizure annotation
+    and detection with neural dynamic divergence. medRxiv, 2026-02-15.
     """
-    def __init__(self, checkpoint_path = None, config_path = None, w_size=1, w_stride=0.5, fs=256, batch_size=2048, verbose=False, device='cuda' if torch.cuda.is_available() else 'cpu', **kwargs):
+    def __init__(self, checkpoint_path=None, config_path=None,
+                 w_size=1, w_stride=0.5, fs=256, batch_size=2048,
+                 verbose=False,
+                 device='cuda' if torch.cuda.is_available() else 'cpu',
+                 **kwargs):
+        """
+        Parameters
+        ----------
+        checkpoint_path : str or None, default=None
+            Path to the ONCET ``.pth`` checkpoint. If None, the packaged
+            checkpoint is downloaded via ``_downloads``.
+        config_path : str or None, default=None
+            Path to the matching training-config ``.json``. If None,
+            the packaged config is downloaded via ``_downloads``.
+        w_size : float, default=1
+            Window size (seconds) per inference clip. Must match the
+            checkpoint's input length at ``fs``.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+        fs : int, default=256
+            Sampling frequency (Hz) of input iEEG. Should match the
+            preprocessing pipeline used for training.
+        batch_size : int, default=2048
+            Batch size for torch inference.
+        verbose : bool, default=False
+            If True, surface a tqdm progress bar during inference and
+            model load errors.
+        device : str, default='cuda' if available else 'cpu'
+            torch device string for model placement and inference.
+        **kwargs
+            Forwarded to :class:`DynaSDBase` (e.g. ``scaler_class``,
+            ``scaler_kwargs``).
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, **kwargs)
-        """Initialize ONCET wrapper with model and windowing parameters."""
-        self.w_size = w_size
-        self.w_stride = w_stride
-        self.fs = fs
         self.checkpoint_path = checkpoint_path
         self.config_path = config_path
         self.batch_size = batch_size
-        self.verbose = verbose,
+        self.verbose = verbose
         self.device = device
 
         if self.checkpoint_path is None:
@@ -307,72 +358,65 @@ class ONCET(DynaSDBase):
             self.model = None
             raise ValueError(f"Error loading ONCET model: {e} from {self.checkpoint_path}")
     
-    def fit(self, x):
+    def fit(self, X):
         """
-        Fit RobustScaler to training data for normalization.
+        Fit RobustScaler on baseline data.
 
-        Parameters:
-        -----------
-        x : pandas.DataFrame
-            Training data (samples x channels)
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
         """
-        self.scaler = RobustScaler().fit(x)
+        self.scaler = RobustScaler().fit(X)
         self.is_fitted = True
 
-    def forward(self, x):
+    def forward(self, X):
         """
-        Generate seizure detection predictions using ONCET model.
-        
-        Processes multi-channel iEEG data through sliding windows, applies
-        normalization, and generates seizure probability for each window-channel pair.
-        
-        Parameters:
-        -----------
-        x : pandas.DataFrame
-            Input iEEG data (samples x channels)
-            
-        Returns:
-        --------
-        pd.DataFrame
-            Seizure probabilities with windows as rows and channels as columns
+        Run inference on new data.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Per-window seizure probability of shape
+            (n_windows, n_channels). Row index = realized window-start
+            times (seconds). Columns = X.columns.
         """
         assert self.is_fitted, "Must fit model before running inference"
         if self.model is None:
             raise ValueError("No valid ONCET model available for prediction")
 
-        # Store channel names and calculate dimensions
-        chs = x.columns
-        nwins = num_wins(len(x), self.fs, self.w_size, self.w_stride)
+        chs = X.columns
+        nwins = num_wins(len(X), self.fs, self.w_size, self.w_stride)
         nch = len(chs)
-        
-        # Apply normalization and prepare data for WaveNet
-        x_normalized = pd.DataFrame(self.scaler.transform(x), columns=chs)
-        x_prepared = self._prepare_oncet_segment(x_normalized)
-        if not self.verbose:
-            verbocity = 0
-        else:
-            verbocity = 1
-        # Generate predictions (get seizure probability from class 1)
-        probabilities = []
-        # Batch processing: use DataLoader to process x_prepared in batches
-        from torch.utils.data import DataLoader, TensorDataset
 
+        x_normalized = pd.DataFrame(self.scaler.transform(X), columns=chs)
+        x_prepared = self._prepare_oncet_segment(x_normalized)
+
+        from torch.utils.data import DataLoader, TensorDataset
         dataset = TensorDataset(x_prepared)
-        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=False, pin_memory=True)
+        loader = DataLoader(dataset, batch_size=self.batch_size,
+                            shuffle=False, pin_memory=True)
 
         probabilities = []
         for batch in tqdm(loader, disable=not self.verbose):
-            batch_x = batch[0].to(self.device)  # shape: batch x 1 x 256
+            batch_x = batch[0].to(self.device)
             y = self.model.get_seizure_probability(batch_x)
             probabilities.append(y.detach().cpu().numpy())
         probabilities = np.concatenate(probabilities, axis=0)
-        # Reshape to windows x channels format. Index is realized
-        # window-start times in seconds (spec section 5).
+
+        # Index is realized window-start times in seconds (spec section 5).
         probabilities = probabilities.reshape(nwins, nch)
         features_df = pd.DataFrame(
             probabilities,
-            columns=x.columns,
-            index=self.get_win_index(len(x)),
+            columns=X.columns,
+            index=self.get_win_index(len(X)),
         )
         return features_df
         # y = self.model.get_seizure_probability(x_prepared)

@@ -64,27 +64,99 @@ class MultiStepLSTM(nn.Module):
 
 class NDD(NDDBase):
     """
-    NDD (Neural Dynamic Divergence) - Multi-step LSTM model without skip connections or input stacks.
-    Simplified version of GIN.
+    NDD (Neural Dynamic Divergence).
+
+    Trains an autoregressive LSTM to forecast the next time step on
+    baseline dynamics. At inference, per-window forecasting MSE
+    quantifies divergence from the baseline dynamics.
+
+    Reference
+    ---------
+    Ojemann, W. K. S., Xu, Z., Shi, H., Walsh, K., Pattnaik, A.,
+    Sinha, N., Lavelle, S., Aguila, C., Gallagher, R., Revell, A.,
+    LaRocque, J. J., Korzun, J., Kulick-Soper, C. V., Zhou, D. J.,
+    Galer, P. D., Sinha, S. R., Shinohara, R. T., Davis, K. A.,
+    Litt, B., and Conrad, E. C., 2026. Unsupervised seizure annotation
+    and detection with neural dynamic divergence. medRxiv, 2026-02-15.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  hidden_size=10,
                  num_layers=1,
                  fs=256,
                  sequence_length=12,
                  forecast_length=1,
-                 w_size=1, 
+                 w_size=1,
                  w_stride=0.5,
                  num_epochs=10,
                  batch_size='full',
                  lr=0.01,
                  use_cuda=False,
                  **kwargs):
+        """
+        Parameters
+        ----------
+        hidden_size : int, default=10
+            LSTM hidden state size.
+        num_layers : int, default=1
+            Number of stacked LSTM layers.
+        fs : int, default=256
+            Sampling frequency (Hz) of input iEEG.
+        sequence_length : int, default=12
+            Number of input samples fed to the LSTM per forecast.
+        forecast_length : int, default=1
+            Number of samples forecast per sequence at inference.
+            Training always uses teacher-forced single-step forecasts.
+        w_size : float, default=1
+            Aggregation window size (seconds) for per-window divergence.
+        w_stride : float, default=0.5
+            Window stride (seconds) between consecutive windows.
+        num_epochs : int, default=10
+            Training epochs.
+        batch_size : int or 'full', default='full'
+            Mini-batch size; 'full' uses the entire training set per
+            step.
+        lr : float, default=0.01
+            Adam learning rate.
+        use_cuda : bool, default=False
+            If True and CUDA is available, train and infer on GPU.
 
+        Other Parameters
+        ----------------
+        early_stopping : bool, default=False
+            Enable validation-loss early stopping during training.
+        val_split : float, default=0.2
+            Fraction of training sequences held out for validation when
+            ``early_stopping=True``.
+        patience : int, default=5
+            Epochs without ``tolerance``-level improvement before
+            stopping early.
+        tolerance : float, default=1e-4
+            Minimum validation-loss improvement counted as progress.
+        verbose : bool, default=True
+            If True, print training diagnostics and tqdm progress.
+        num_workers : int, default=0
+            DataLoader worker count for training.
+        pin_memory : bool, default=use_cuda
+            DataLoader ``pin_memory`` flag.
+        persistent_workers : bool, default=True
+            DataLoader ``persistent_workers`` flag (applied only when
+            ``num_workers > 0``).
+        prefetch_factor : int, default=3
+            DataLoader ``prefetch_factor`` (applied only when
+            ``num_workers > 0``).
+        grad_accumulation_steps : int, default=1
+            Number of mini-batches to accumulate gradients over before
+            an optimizer step.
+        mrse : bool, default=False
+            Reserved flag; see :class:`NDDBase`.
+        scaler_class : type, default=sklearn.preprocessing.RobustScaler
+            Scaler class used to normalize input data.
+        scaler_kwargs : dict, default={}
+            Keyword arguments forwarded to ``scaler_class``.
+        """
         super().__init__(fs=fs, w_size=w_size, w_stride=w_stride, use_cuda=use_cuda, **kwargs)
-        
-        # Store parameters - matching GIN structure
+
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.sequence_length = sequence_length
@@ -99,7 +171,20 @@ class NDD(NDDBase):
         return self._prepare_multistep_sequences(data, self.sequence_length, self.forecast_length, ret_positions)
 
     def fit(self, X):
-        """Fit the LSTM forecasting model using shared training loop"""
+        """
+        Fit the LSTM forecaster on baseline data.
+
+        Trains with teacher-forced single-step forecasts via
+        :meth:`NDDBase._train_model_multistep`, then computes and stores
+        per-channel baseline MSE statistics used by :meth:`forward` to
+        z-score test-time prediction errors.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Baseline (interictal) iEEG of shape (n_samples, n_channels)
+            with channel names as columns.
+        """
         input_size = X.shape[1]
 
         # Initialize model
@@ -129,7 +214,26 @@ class NDD(NDDBase):
         )
 
     def predict(self, X):
-        """Use the shared multi-step prediction from NDDBase"""
+        """
+        Generate the forecasted time series for diagnostics.
+
+        Use :meth:`forward` (or ``self(X)``) for seizure detection
+        features. This method returns the reconstructed forecast itself
+        and is intended for inspecting model behavior, not detection.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            Input iEEG of shape (n_samples, n_channels) with channel
+            names as columns.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Forecasted iEEG of shape (n_samples, n_channels) on the
+            original scale, with NaNs for the first ``sequence_length``
+            samples that have no preceding context. Columns = X.columns.
+        """
         return self.predict_multistep(X)
     
     def __str__(self):
